@@ -10,10 +10,42 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 real completion in flight
-**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`) at `VERSION: v1.0`. All pipeline wiring + schema + fixes are live as of 2026-04-20 evening. Until the prompt files land, `extract_chunk` and `run_chunk_synthesis` fail loudly with `NotImplementedError` pointing at this blocker.
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 real completion in flight. **Golden-set ground-truth corpus is now complete (5/5 films).**
+**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`) at `VERSION: v1.0`. All pipeline wiring + schema + fixes are live as of 2026-04-20 evening. Until the prompt files land, `extract_chunk` and `run_chunk_synthesis` fail loudly with `NotImplementedError` pointing at this blocker. **Ground truth is no longer a blocker — all 5 golden films have hand-written `ground_truth.md` ready for diff against TEX outputs.**
 **Blockers:** Prompt text for 0A and 0B is not written. Tommy owns this work (see TRAINING.md). The code path that consumes them is fully wired, the schema migration is applied, and the idempotency retry bug is fixed — the pipeline will start producing real synthesis documents the moment both files exist.
-**Last Updated:** April 20, 2026 (evening, post-migration-apply)
+**Last Updated:** May 12, 2026 (afternoon, post-Film-05-ground-truth)
+
+**Session log (2026-05-12, afternoon) — Film 05 (La Lumiere vs Oak Hill) ground truth complete; golden-set ground-truth corpus is now 5/5:**
+
+Tommy filled `film_watch_notes.md` for Film 05 over the previous watch sessions (61 logged La Lumiere possessions across 4 chunks). This session did the synthesis:
+
+*Watch notes cleanup:*
+- Fixed typos and column alignment in the possession tables (chunks 0–3).
+- Normalized awkward time formats (e.g., `Q3 00:18:08` → `Q3 0:18`).
+- Computed end-of-chunk summary stats from the Outcome column where Tommy had left them blank (TOs, OREBs, transition opps, FT trips by chunk).
+- Filled the whole-game wrap-up section (final 81–75 LL win, +6 margin, comeback shape, ~62 possessions, 9/17/13 FT, 3 OREBs, 4 TOs, close late).
+- Added a Flagged section for genuine inconsistencies (chunk 0 row 8 lineup-vs-sub-time conflict, chunk 1 row 12 #21-vs-#11 attribution typo, chunk 3 untracked late-game TO vs OH trap pressure).
+
+*Ground truth synthesis:*
+- Wrote `golden_set/film_05_la_lumiere_vs_oak_hill/ground_truth.md` following the Film 03/04 structure.
+- Action inventory totals: DHO motion (~24, primary), High PnR with #20 Wright as primary screener (~11), Transition (~13), Iso (~5), Zone offense reactive vs OH 1-2-2 (3), BLOB family (2). **No Horns, no Spain PnR, no named sets** — LL's structure is DHO + PnR repetition.
+- Player profiles for #10 Sanderson (primary scoring guard / late-game closer), #20 Wright (screen-and-roll engine + clutch shot-maker — hit the game-extending 3 at Q4 1:00), #2 Cleveland (secondary handler), #1 Kemp (combo guard), #11 Weis (DHO target + **defensive liability OH targeted in Q4**), #21 Knight (rotational big), #3 Webber (rotation wing).
+- **Largest roster-vs-tape discrepancy logged:** `#44 Solongo` (seeded 7'0" Sr C starter) NOT observed in any logged possession or substitution. Status `not_evaluated`. Possible DNP / injury / garbage-time only — flagged for follow-up.
+- Defensive findings: pressure man-to-man base, ZERO press deployments, mixed PnR coverage from 3-possession sample (insufficient for base-coverage claim), transition defense as systemic weakness, `#11 Weis` as primary defensive exposure (`[CONFIRMED]`).
+
+*Golden-set status (Stage 1, see below):*
+- All 5 hand-written ground truth docs exist on disk:
+  1. `film_01_bbe_vs_team_durant/ground_truth.md`
+  2. `film_02_rebels_vs_az_unity/ground_truth.md`
+  3. `film_03_spire_vs_la_lumiere/ground_truth.md`
+  4. `film_04_montverde_vs_brewster/ground_truth.md`
+  5. `film_05_la_lumiere_vs_oak_hill/ground_truth.md` ← **completed this session**
+- Stage 1 definition of done #1 ("5 golden films, each with a hand-written ground-truth scouting document per TRAINING.md §2") = **MET**.
+- Stage 1 remaining work: Prompts 0A + 0B (blocker), end-to-end execution against all 5 films, internal grading UI, `EVAL_SCORES.md` tracking, ≥85% captured / <5% hallucinated bar held across ≥3 consecutive iterations.
+
+*Git state:*
+- Watch notes + ground truth changes are uncommitted in the working tree — Tommy reviews before commit.
+- No code changes this session. No migrations.
 
 **Session log (2026-04-20, evening) — Idempotency fix + AGENTS.md alignment + migration applied to Neon dev:**
 
@@ -894,7 +926,14 @@ The existing Phase 4 admin corrections UI (`/admin`) is ~60% of what's needed bu
 
 **Gate to Stage 2:** Golden scores hit bar on 3 consecutive iterations.
 
-**Current state:** In progress. Blocked on Prompts 0A / 0B (see ACTIVE BLOCKERS). Internal grading UI is a parallel workstream Tommy can ship any time — does not depend on 0A/0B being written first.
+**Current state:** In progress. **Ground-truth corpus complete (5/5 films) as of 2026-05-12.** Still blocked on Prompts 0A / 0B (see ACTIVE BLOCKERS) before TEX can produce any output to grade. Internal grading UI is a parallel workstream Tommy can ship any time — does not depend on 0A/0B being written first, but now has 5 fully-written ground truth docs ready to diff against.
+
+**Ground-truth corpus (all 5 docs complete on disk):**
+- `golden_set/film_01_bbe_vs_team_durant/ground_truth.md`
+- `golden_set/film_02_rebels_vs_az_unity/ground_truth.md`
+- `golden_set/film_03_spire_vs_la_lumiere/ground_truth.md`
+- `golden_set/film_04_montverde_vs_brewster/ground_truth.md`
+- `golden_set/film_05_la_lumiere_vs_oak_hill/ground_truth.md`
 
 ---
 
@@ -1332,4 +1371,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: April 20, 2026 (evening) — Commercial Readiness Ladder added. Covers Stages 1-8 from current golden-set work through HS/AAU general launch, NCAA expansion, and the long-term AI GM product for NBA / WNBA / G-League / international front offices. Documents per-stage definition of done, gates, capital strategy, hiring sequence, compliance requirements, and key risks. Maps every stage back to the engineering phases above. Prior engineering update: April 20 mid-day (pipeline wiring + idempotency fix + migration 016 apply).*
+*Last updated: May 12, 2026 (afternoon) — Film 05 ground truth (La Lumiere vs Oak Hill) complete. Golden-set ground-truth corpus is now 5/5 — Stage 1 definition-of-done item #1 met. Stage 1 remains blocked on Prompts 0A/0B before TEX can produce gradable output. Prior session: April 20, 2026 (evening) — Commercial Readiness Ladder added; engineering pipeline wiring + idempotency fix + migration 016 apply.*
