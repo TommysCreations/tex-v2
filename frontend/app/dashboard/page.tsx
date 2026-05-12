@@ -19,10 +19,15 @@ const LEVELS = [
   { value: "d2", label: "D2" },
   { value: "d3", label: "D3" },
   { value: "eybl", label: "EYBL" },
+  { value: "eybl_scholastic", label: "EYBL Scholastic" },
   { value: "aau", label: "AAU" },
   { value: "high_school", label: "High School" },
   { value: "unknown", label: "Unknown" },
 ];
+
+function levelLabel(value: string): string {
+  return LEVELS.find((l) => l.value === value)?.label ?? value.toUpperCase();
+}
 
 export default function DashboardPage() {
   const { getToken } = useAuth();
@@ -92,6 +97,34 @@ export default function DashboardPage() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <p className="text-gray-400">Loading...</p>
+      </div>
+    );
+  }
+
+  // Failed to load — surface the error instead of falling through to the empty
+  // onboarding state. Without this, a backend / network failure looks identical
+  // to "user has no teams yet" and is misleading.
+  if (error && teams.length === 0) {
+    return (
+      <div className="mx-auto max-w-2xl px-6 py-20 text-center">
+        <h1 className="text-2xl font-bold text-white">Couldn&apos;t load dashboard</h1>
+        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">
+          {error}
+        </p>
+        <p className="mt-6 text-sm text-gray-400">
+          This usually means the backend isn&apos;t reachable or your session
+          token expired. Try refreshing.
+        </p>
+        <button
+          onClick={() => {
+            setLoading(true);
+            setError(null);
+            loadData();
+          }}
+          className="mt-6 rounded-lg bg-brand px-6 py-3 font-semibold text-black hover:bg-orange-400"
+        >
+          Retry
+        </button>
       </div>
     );
   }
@@ -220,7 +253,7 @@ export default function DashboardPage() {
             >
               <h3 className="font-semibold text-white">{team.name}</h3>
               <p className="mt-1 text-sm text-gray-400">
-                {team.level.toUpperCase()} &middot; {teamFilms.length} film
+                {levelLabel(team.level)} &middot; {teamFilms.length} film
                 {teamFilms.length !== 1 ? "s" : ""}
               </p>
             </a>
