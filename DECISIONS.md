@@ -489,6 +489,53 @@ code changes.
 
 ---
 
+## D-019 — pre-commit + gitleaks for local secret prevention
+
+**Decision:** Adopt the `pre-commit` framework (https://pre-commit.com) with `gitleaks` as
+the first and only hook in PR 1 of the repo hygiene cleanup. Format / lint / hygiene hooks
+(`ruff`, `prettier`, `eslint`, `trailing-whitespace`, `end-of-file-fixer`,
+`check-added-large-files`) land in PR 4 alongside the linter configs they enforce — keeping
+PR 1 surgically scoped to security.
+
+**Rationale:** GitHub's secret scanning + push protection are already enabled at the repo
+level (confirmed in the 2026-05-17 audit) and will block known-pattern secrets server-side
+on `git push`. But the failure mode they protect against — a secret committed locally, then
+pushed — still pays the cost of needing to rotate the key (push protection only prevents the
+public exposure, not the local commit). A pre-commit hook catches the secret before it lands
+in a commit at all, eliminating the rotation cost. The two layers are complementary:
+pre-commit is the first line, push protection is the safety net, Dependabot + vulnerability
+scanning is the third line for dependency-introduced secrets and CVEs.
+
+`gitleaks` (over `detect-secrets`) chosen because it has zero Python runtime dependency
+(single Go binary downloaded by pre-commit on first run), ships with a maintained ruleset
+that covers Stripe, GCP service accounts, Clerk JWTs, AWS / R2 keys, and generic high-entropy
+patterns out of the box, and the same tool runs in the PR 3 CI workflow — one config, two
+surfaces. Local hook + CI workflow is the canonical pre-commit + CI pattern; using two
+different tools (e.g. `detect-secrets` locally and `gitleaks` in CI) creates surface drift
+where local passes but CI fails on the same content.
+
+**Alternatives considered:**
+
+- `detect-secrets` (Yelp): Python-native, decent ruleset, integrates with pre-commit cleanly.
+  Rejected because it requires a `.secrets.baseline` file that must be regenerated and
+  reviewed on every new finding, adds a Python runtime dep to the hook, and the ruleset is
+  less actively updated than gitleaks' (last meaningful rule add was 2024-Q1 vs gitleaks'
+  monthly cadence).
+- Bare `.git/hooks/` (no framework): rejected because git hooks are not tracked in the repo —
+  they live in `.git/hooks/`, which is per-clone and per-developer. Pre-commit centralizes
+  config in `.pre-commit-config.yaml` (tracked), and `pre-commit install` is a one-time setup
+  per clone.
+- TruffleHog: similar capability to gitleaks. Rejected on speed (heavier binary, slower scan
+  on large diffs) and on the secondary point that gitleaks' ruleset is the de-facto standard
+  for the pre-commit + GitHub Actions pattern, with broader community config examples.
+
+**Reversal condition:** None anticipated. If gitleaks rules become noisy in the local workflow
+(false positives on legitimate code), tune via a project-local `.gitleaks.toml` rather than
+removing the hook. If a specific rule generates consistent friction, document the rationale
+for the suppression in this file as a D-NNN entry.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -507,5 +554,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: April 15, 2026 — D-018 added (Vertex AI migration executed early).*
-*18 decisions logged. All decisions current as of this date.*
+*Last updated: May 17, 2026 — D-019 added (pre-commit + gitleaks for local secret prevention).*
+*19 decisions logged. All decisions current as of this date.*

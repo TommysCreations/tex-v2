@@ -1,0 +1,38 @@
+# Dependabot configuration for TEX v2.
+#
+# Weekly version updates for the three ecosystems we use. Security alerts and
+# automated security fixes are toggled separately in repo Settings (enabled
+# alongside this file in PR 1 via `gh api -X PUT /repos/{owner}/{repo}/vulnerability-alerts`
+# and `gh api -X PUT /repos/{owner}/{repo}/automated-security-fixes`).
+#
+# Update PRs are labeled so they can be filtered in the PR list. Per-ecosystem
+# PR limit keeps Monday morning manageable.
+
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"

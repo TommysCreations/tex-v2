@@ -1,0 +1,39 @@
+# Pre-commit hooks for TEX v2.
+#
+# PR 1 ships gitleaks (local secret prevention) plus a small set of standard
+# hygiene hooks (whitespace, EOL, merge-conflict markers, large files). Lint
+# and format hooks — ruff, prettier, eslint, mypy — land in PR 4 alongside
+# the linter configs they enforce, because those must match what CI runs and
+# the CI workflows ship in PR 3.
+#
+# Install once after clone:
+#   pip install pre-commit
+#   pre-commit install
+#
+# After install, hooks run automatically on `git commit`. To run on the
+# full repo on demand:
+#   pre-commit run --all-files
+#
+# CI runs gitleaks separately as a workflow gate (added in PR 3). The local
+# hook is the fast first line; the CI run is the safety net for PRs that
+# skip the hook or are opened from environments without pre-commit installed.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        # 500 KB cap. ROADMAP.md (~132 KB) and the golden_set ground_truth.md
+        # files (~80-90 KB each) are well under. The audit's large-files scan
+        # confirmed no legitimate tracked file approaches 500 KB today, so this
+        # blocks accidents (a stray image, a .pyc, a checked-in .mp4 chunk)
+        # without forcing per-file overrides on existing content.
+        args: ["--maxkb=500"]
