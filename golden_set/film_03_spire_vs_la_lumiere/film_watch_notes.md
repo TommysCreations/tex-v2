@@ -613,7 +613,7 @@ If the game is a blowout, note that explicitly and tag each late possession as
 
 | Clock | Type | Team | Action | Outcome | Notes |
 |---|---|---|---|---|---|
-|   |   |   |   |   |   |
+|   |   |   |   |   |   
 
 ### Pace feel
 

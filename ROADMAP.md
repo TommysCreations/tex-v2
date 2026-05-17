@@ -10,10 +10,155 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 real completion in flight. **Golden-set ground-truth corpus is now complete (5/5 films).**
-**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`) at `VERSION: v1.0`. All pipeline wiring + schema + fixes are live as of 2026-04-20 evening. Until the prompt files land, `extract_chunk` and `run_chunk_synthesis` fail loudly with `NotImplementedError` pointing at this blocker. **Ground truth is no longer a blocker — all 5 golden films have hand-written `ground_truth.md` ready for diff against TEX outputs.**
-**Blockers:** Prompt text for 0A and 0B is not written. Tommy owns this work (see TRAINING.md). The code path that consumes them is fully wired, the schema migration is applied, and the idempotency retry bug is fixed — the pipeline will start producing real synthesis documents the moment both files exist.
-**Last Updated:** May 12, 2026 (afternoon, post-Film-05-ground-truth)
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
+**Active Task:** **Stage 1 text gate + Phase 3.17:** **(1) done** for Film 04 in Neon (**v1.6** preprocess). **(2)** Smell-test chunk extractions + synthesis vs **`golden_set/film_04_montverde_vs_brewster/ground_truth.md`**. **(3)** If good → **`generate_report`** smoke (full chord + PDF); if gaps → prompt/golden iterations.
+**Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
+**Last Updated:** May 15, 2026 — Film 04 **`v1.0|v1.6`** cache row written in Neon; step (1) complete.
+
+**Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
+
+**Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
+**Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-12, late evening) — First end-to-end pipeline run on real film (Film 04 — Montverde vs Brewster, 1.95 GB); Prompts 0A v1.0 confirmed running on 4/4 chunks; Prompt 0B v1.0 blocked by SDK HTTP-timeout bug:**
+
+This was the smoke test queued by the late-afternoon session log. Previous-session plan said Film 01 (BBE — smallest); Tommy elected Film 04 (Montverde, 1.95 GB — actually the smallest .mp4 on disk). Pre-processing pipeline ran on real film for the first time end-to-end. **3 of 3 infrastructure phases succeeded; Phase 3 (synthesis) failed on a fixable HTTP-timeout bug. No code changes landed this session — fix queued for tomorrow.**
+
+*Smoke test result by phase:*
+
+**Pre-flight (Steps A–E):**
+- Montverde roster: seeded clean (11 players) via `scripts/seed_montverde_roster.py`. Idempotent re-run (DELETE + INSERT). Roster sourced from public Montverde Academy V. Basketball roster page, 2025-26 season — see script for full mapping.
+- `docker compose up -d --build api worker`: clean build (171s, 15/15 steps), both `tex-v2-api-1` and `tex-v2-worker-1` containers `Recreated` and `Up`.
+- Worker startup: all 8 Celery tasks registered across 4 queues (`film_processing`, `report_generation`, `section_generation`, `notifications`); `Connected to redis://redis:6379/0`; `Startup recovery: no stuck jobs found`; `celery@94e1198af3ec ready.`
+- Gemini auth + billing: `GEMINI_API_KEY` present (length 53 — newer AI Studio key format), one-shot Flash call returned `OK`. Confirms both auth and AI Studio billing funded.
+- Next.js dev server: `npm run dev` came up on `localhost:3000`. Clerk login worked. (Next.js 15 noise about un-awaited `headers()` in dev mode — informational, not blocking; cleanup deferred.)
+
+**Step F — film upload:**
+- Uploaded `montverde_vs_brewster.mp4` (1.95 GB) via `/upload?team_id=177776fa-8136-497a-bbc2-d83ac1c11027`. R2 PUT via presigned URL took ~5 min on Tommy's home connection. Browser confirmed `Film uploaded. TEX is processing your film — this takes 10–20 minutes`. Film row written to Neon: `films.id = e21a5d8a-f390-4e27-a314-0de875239d09`.
+
+**Step G — Phase 1 (`process_film`):**
+- `process_film[5b9e712b-c21e-4d9a-817a-d5ee082f5daa]` ran 02:11:25 UTC → 02:55:23 UTC. **Total: 2,638s (~44 min).**
+- FFmpeg compressed the 1.95 GB H.264 1080p file to a 720p H.264 working copy, then split into **4 chunks** of ~22 min each, then sequential R2 uploads. CPU sustained at 700%+ during the long silent window — confirmed alive via two `docker stats` snapshots (722% → 712% over 14 min, BLOCK I/O steadily growing). Bottleneck is software-only x264 inside Docker for Mac (no VideoToolbox hw acceleration inside the Linux VM).
+- A panic moment hit at the 50-min mark when the assistant (over-cautiously) recommended killing and pivoting to native pre-compression. Compression completed 4 min later on its own. **No code changes were made — `docker compose restart worker` was typed into the wrong terminal (foreground log-tail consumed stdin) and never actually executed.** Nothing was killed. Chunking + R2 uploads completed normally. Lesson logged: check fresh worker logs, not just `docker stats`, before recommending a kill.
+
+**Step G — Phase 2 (`extract_chunk` × 4, Prompt 0A v1.0 on Gemini 2.5 Pro):**
+- All 4 chunks succeeded. Output sizes from log lines: **chunk 0 = 4,381 chars (1,153 output tokens), chunk 1 = 4,432 chars (1,114 tokens), chunk 2 = 4,090 chars (1,049 tokens), chunk 3 = 5,018 chars (1,325 tokens).** Input tokens ~265K–443K per chunk (the video itself; Gemini tokenizes ~20K tokens per minute of video).
+- Each chunk hit at least one retry mid-call with `ConnectionError(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')))` — same root cause as the Phase 3 failure (see below). With `max_retries=3` per AGENTS.md, all 4 eventually got under the wire on a retry attempt that completed in <60s. Total Phase 2: ~9 min wall-clock from 02:00:52 UTC → 02:12:10 UTC.
+- The idempotency / resume branch in `extract_chunk` (added 2026-04-20 evening) worked exactly as designed: log lines show `chunk <uuid> already uploaded (extraction_status=extracting), resuming at Prompt 0A` on every retry, avoiding any re-uploads to the Gemini File API. AFC ("Auto-Function-Calling") info messages on every call, no behavioral surprises.
+- All 4 `film_chunks` rows now have `extraction_status='complete'`, `gemini_file_state='active'`, and non-empty `extraction_output` of 4,090–5,018 chars in Neon dev. **Step H Pass Criterion #1 (every chunk's extraction_output > ~2,000 chars) is structurally MET — content quality not yet read.**
+
+**Step G — Phase 3 (`run_chunk_synthesis`, Prompt 0B v1.0 on Gemini 2.5 Flash):**
+- `run_chunk_synthesis[c3bf6e06-412a-4598-84cf-354c536d95ba]` enqueued at 02:12:10 UTC by the atomic last-chunk gate. Input: 4 chunks concatenated + roster = **18,653 context chars.**
+- **All 3 attempts (initial + 2 retries per `max_retries=2`) failed** with the same `RemoteDisconnected` error. Each attempt died at the ~60s mark on the Gemini Flash call. Final ERROR-level traceback at 02:18:00 UTC.
+- Per AGENTS.md graceful degradation, films should be marked `status='processed'` with a `synthesis_failed=true` flag (or equivalent column). Not yet verified in Neon — pending Step H Part 1 inspection next session. Worth checking: if `films.status='processing'` (not 'processed'), `recover_stuck_jobs()` will re-enqueue process_film at the 2-hour threshold (~04:11 UTC = 12:11 AM ET), which would be wasted work — mark it manually before the threshold if needed.
+- No `film_analysis_cache` row was ever written for this film. Sections 1-4 would currently fail or return empty content if a report were triggered against Film 04.
+
+*Root cause (confirmed by reading `services/ai/gemini.py`):*
+
+`backend/services/ai/gemini.py` line 70: `self._dev_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])` does not pass `http_options`. The `google-genai` SDK falls back to the underlying `requests` library's default behavior, which combined with Google's edge-proxy connection-keepalive window manifests as a **~60-second hard ceiling on response time** before the connection is dropped server-side and the client raises `ConnectionError`. This bites synthesis the hardest because Prompt 0B on Flash with 18.6K chars of structured input + ~5–10K chars of structured output legitimately takes 60–90 seconds and `run_chunk_synthesis` only has 2 retries (vs. 3 for `extract_chunk`). It also bit `extract_chunk` (every chunk hit at least one retry) but the extra retry plus shorter Pro completion times (~30–58s when they made it) let the chunks all eventually succeed.
+
+*Pending fix (next session — code prepared but not landed):*
+
+`backend/services/ai/gemini.py` `_get_dev_client()`:
+
+```python
+def _get_dev_client(self):
+    from google import genai
+    from google.genai import types
+
+    if self._dev_client is None:
+        # 300s timeout (vs. SDK default ~60s) — needed because Prompt 0B
+        # synthesis on Gemini Flash and Prompts 1-4 on Pro routinely take
+        # 60-120s for long inputs. Without this, every long call dies with
+        # RemoteDisconnected and burns Celery retries. SDK takes ms.
+        self._dev_client = genai.Client(
+            api_key=os.environ["GEMINI_API_KEY"],
+            http_options=types.HttpOptions(timeout=300_000),
+        )
+    return self._dev_client
+```
+
+Edit attempt was started in this session via StrReplace tool but interrupted by Tommy ("I'll do this tomorrow"). No code changes landed in the working tree. Apply the change first thing next session.
+
+*Recovery path (after the fix):*
+
+The 4 chunk extractions are intact in `film_chunks.extraction_output`. **No need to re-upload Film 04 or re-run the 1-hour `process_film` + `extract_chunk` pipeline.** Pick up from synthesis:
+
+1. Apply the `_get_dev_client` timeout fix above.
+2. `docker compose restart worker` (worker reloads code, picks up the new HTTP timeout).
+3. Manually re-trigger synthesis from inside the worker container:
+   ```bash
+   docker compose exec worker python -c "
+   from tasks.film_processing import run_chunk_synthesis
+   run_chunk_synthesis.delay('e21a5d8a-f390-4e27-a314-0de875239d09')
+   "
+   ```
+4. Tail logs: `docker compose logs -f worker --tail=50`. Expect synthesis call to take 60–120s (well within the new 300s timeout) and write `film_analysis_cache.synthesis_document`.
+5. **Step H Part 1**: read all 4 `film_chunks.extraction_output` values and smell-test each. Question: do they read like real per-chunk basketball observation logs (action names, jersey numbers, possession-by-possession structure) or are they generic AI-flavored gibberish?
+6. **Step H Part 2**: read `film_analysis_cache.synthesis_document` and smell-test against pass criteria — >3,000 chars total, first 500 chars look like real synthesized scouting (named action sets, named players, structured headers), not boilerplate.
+7. If both pass → Stage 1 quality validation has its first real signal. Decide whether to also run Film 01 (smallest golden film, 1.5 GB) for variance check or move directly to triggering a 4-section chord report against Film 04.
+8. If either fails → iterate Prompts 0A or 0B to v1.1 before spending more Gemini Pro tokens. Quality is the primary risk surface from here on.
+
+*What this confirms tonight (incremental signal — not full Stage 1 quality validation):*
+
+- ✅ The pre-processing pipeline runs end-to-end on real 1.95 GB film without manual intervention (modulo retries handled by Celery).
+- ✅ Prompt 0A v1.0 produces 4,090–5,018 chars of output per ~22-min chunk. Output **size** consistent across all 4 chunks; content **quality** not yet read.
+- ✅ Idempotency + atomic last-chunk gate + Gemini File API resume branch + FFmpeg compression all behave as designed.
+- ✅ `recover_stuck_jobs()` ran clean on worker boot (no stuck jobs found).
+- ❓ Prompt 0B v1.0 quality: not yet testable — synthesis never completed.
+- ❓ Prompt 0A v1.0 quality: not yet read — chunk extraction text content not inspected.
+- ❌ Stage 1 Commercial Readiness Ladder definition-of-done item #2 (Prompts 0A + 0B confirmed producing substantive output): still **not met** — partially advanced but not yet validated.
+
+*Tech debt logged from this session (defer to post-launch unless they bite again):*
+
+- **SDK HTTP timeout** (`services/ai/gemini.py`): root cause of tonight's synthesis failure. Fix queued for next session. Once applied, this also eliminates the retry storm on `extract_chunk` (each chunk currently hits ≥1 unnecessary retry burning Gemini quota).
+- **FFmpeg compression in Docker for Mac is ~10x slower than native** (no VideoToolbox hw acceleration inside the Linux VM). 1.95 GB took ~40 min in Docker vs. expected ~5 min on native macOS. For dev iterations on golden-set films, two options: (a) pre-compress to <1.8 GB so `process_film` skips compression entirely (the >1.8 GB threshold gates that branch), or (b) run FFmpeg natively for dev. **Production Cloud Run workers do not have this issue** — Linux x264 software encoding is fast enough on Cloud Run's CPU allocations. No code change needed today.
+- **Stale film record `e21a5d8a-f390-4e27-a314-0de875239d09`**: will be re-examined Step H Part 1 next session. If status='processing' (not 'processed' with synthesis_failed flag), `recover_stuck_jobs()` will re-enqueue process_film at 2-hour threshold. Mark manually before then if needed (or just before re-trigger of synthesis).
+- **Next.js 15 dev-mode warnings** about un-awaited `headers()` in `app/upload/page.tsx` (and possibly elsewhere). Informational, not blocking. Cleanup deferred until post-launch dev-mode polish.
+
+*Git state:*
+
+- No code changes landed this session. Working tree unchanged from start of session: still has the two prompt files staged from the late-afternoon session (`backend/prompts/chunk_extraction.txt`, `backend/prompts/chunk_synthesis.txt`) plus the 5 ground-truth doc edits.
+- ROADMAP updated this commit (this session log added; Active Task / Blockers / Last Updated refreshed).
+- CLAUDE.md `CURRENT PROJECT STATE` updated to mirror this session's outcome and next-session pickup.
+
+---
+
+**Session log (2026-05-12, late afternoon) — Prompts 0A + 0B saved to disk; pre-processing pipeline is now executable end-to-end:**
+
+The "Prompt 0A + 0B not yet written" blocker that has gated Stage 1 since 2026-04-20 is resolved. Both prompt files now exist on disk at `VERSION: v1.0` and parse cleanly through `services/prompts.py::load_prompt()` — the exact function `extract_chunk` and `run_chunk_synthesis` call. No code changes this session.
+
+*What happened:*
+- Confirmed (re-reading PROMPTS.md §STAGE 1 + §STAGE 2) that Prompts 0A and 0B were already drafted in the spec at `VERSION: v1.0` — the "blocker" was mechanical (copy text into two files), not creative.
+- Wrote `backend/prompts/chunk_extraction.txt` — Prompt 0A, 3,697 chars. Copied verbatim from PROMPTS.md lines 181-246 (header + body, no triple-backticks).
+- Wrote `backend/prompts/chunk_synthesis.txt` — Prompt 0B, 7,773 chars. Copied verbatim from PROMPTS.md lines 260-405 (same shape).
+- Verified `load_prompt('chunk_extraction')` and `load_prompt('chunk_synthesis')` both return `(text, 'v1.0')` with the expected char counts. No more `FileNotFoundError`, no more `NotImplementedError` from `_load_preprocess_prompt`. The pipeline is unblocked.
+
+*What this means concretely:*
+- Next time a film is uploaded, `extract_chunk` will run Prompt 0A against each chunk via `provider.analyze_video(uris=[chunk.gemini_file_uri], ...)` and save real per-chunk observation logs to `film_chunks.extraction_output`.
+- When the last chunk completes, the atomic gate fires `run_chunk_synthesis`, which will concatenate all extractions + roster, run Prompt 0B via `provider.analyze_text(...)` against Gemini Flash, and UPSERT a real synthesis document into `film_analysis_cache.synthesis_document`.
+- Sections 1-4 (already running in Option 3 synthesis-only mode since 2026-04-19) will finally receive a non-empty `text_context`. The "127-char synthesis" failure mode from the 2026-04-20 early-AM eval is gone.
+
+*Deliberately NOT touched:*
+- Section prompts 2/3/5/6 empty-input guardrails — still flagged but lower priority. Once 0A/0B produce substantive output, the underlying hallucination cause goes away.
+- Brad Beal Elite roster — still 2 players. Tommy populates before any quality eval.
+- Any code in `tasks/film_processing.py` or `services/ai/*` — all wiring was already complete from 2026-04-20.
+
+*Git state:*
+- New files staged but uncommitted: `backend/prompts/chunk_extraction.txt`, `backend/prompts/chunk_synthesis.txt`. Tommy reviews before commit.
+- ROADMAP updated this commit to reflect: ACTIVE BLOCKERS cleared, RESOLVED BLOCKERS extended, Stage 1 status refreshed, new session log added.
+
+*What Tommy does next (smoke test, in order):*
+1. `docker compose up -d --build api worker` — rebuild to flush state (prompts are read at task runtime, but cleanest reset).
+2. Upload Film 01 (BBE vs Team Durant — smallest golden film) through the UI.
+3. Tail worker logs. Expect: `extract_chunk` complete on each chunk with `extraction_output` char count > 0; `run_chunk_synthesis` complete with a Flash call and UPSERT to `film_analysis_cache`.
+4. After `films.status = 'processed'`, inspect Neon dev:
+   - `SELECT chunk_index, length(extraction_output) FROM film_chunks WHERE film_id = '<id>' ORDER BY chunk_index;` — every row should have thousands of chars.
+   - `SELECT length(synthesis_document) FROM film_analysis_cache WHERE film_id = '<id>';` — should be several thousand chars and read like coherent scouting.
+5. **Smell-test the synthesis document before running any report.** If it reads thin or generic, tune Prompts 0A / 0B (bump to v1.1) before spending Gemini Pro on a 4-section chord. If it reads like real scouting, trigger a report against Film 01 → grade against `golden_set/film_01_bbe_vs_team_durant/ground_truth.md`.
+6. If grading is going to happen 5x, **build the internal grading UI** (Stage 1 high-leverage workstream) before grading films 02-05. ~2-3 days of work; cuts per-film grading from 3-4 hours to 20-40 minutes.
+
+---
 
 **Session log (2026-05-12, afternoon) — Film 05 (La Lumiere vs Oak Hill) ground truth complete; golden-set ground-truth corpus is now 5/5:**
 
@@ -329,40 +474,39 @@ Add a Developer API fallback identical to Vertex's sentinel path: when `client.c
 
 ## ACTIVE BLOCKERS
 
-### Prompt 0A + 0B Text Not Yet Written
+None code-side. Phase 2 pre-processing pipeline is complete on disk as of 2026-05-12 (late afternoon).
+
+The remaining risk is **prompt quality** at `VERSION: v1.0`: whether Prompts 0A + 0B actually produce substantive, accurate extraction + synthesis on real golden-set film. This is not a blocker — it is the question Stage 1 of the Commercial Readiness Ladder exists to answer. Tracked under "What Tommy does next" in the 2026-05-12 late-afternoon session log above.
+
+If smoke-testing against Film 01 reveals thin synthesis, the work is to bump 0A and/or 0B to `v1.1` based on what was missing — not to re-open this section. Stage 1 grading drives the iteration, not the blocker list.
+
+---
+
+## RESOLVED BLOCKERS
+
+### Prompt 0A + 0B Text Not Yet Written — RESOLVED on disk (2026-05-12 late afternoon)
 
 **Originally discovered:** 2026-04-20 (early AM), during Option 3 end-to-end eval.
-**Scope reduced:** 2026-04-20 (evening), after pipeline wiring + schema migration landed. Code side is now complete.
+**Scope reduced:** 2026-04-20 (evening), after pipeline wiring + schema migration landed. Code side was complete; only the prompt text was missing.
+**Resolved:** 2026-05-12 (late afternoon). Both prompt files copied verbatim from PROMPTS.md §STAGE 1 / §STAGE 2 into `backend/prompts/chunk_extraction.txt` and `backend/prompts/chunk_synthesis.txt` at `VERSION: v1.0`. Verified loadable via `services/prompts.py::load_prompt()` — 3,697 / 7,773 chars respectively, both parse to `version='v1.0'`.
 
-**What's left:**
-- `backend/prompts/chunk_extraction.txt` — Prompt 0A at `VERSION: v1.0`. Does not exist.
-- `backend/prompts/chunk_synthesis.txt` — Prompt 0B at `VERSION: v1.0`. Does not exist.
-
-**What is already done (shipped in commits `3e6a000` and `8a0edca`, plus migration apply):**
+**What was already done before the resolution (shipped in commits `3e6a000` and `8a0edca` on 2026-04-20):**
 - Schema migration 016 applied to Neon dev — `film_chunks.extraction_output` + `extraction_status` + index.
 - `services/ai/base.py` — `analyze_video(uris, prompt, section_type)` abstract method added.
 - `services/ai/gemini.py` — `analyze_video` implemented on both Developer API and Vertex backends.
 - `services/ai/anthropic.py` — video methods explicitly raise `NotImplementedError` (Claude is text-only).
 - `tasks/film_processing.py::extract_chunk` — runs Prompt 0A against each chunk, saves to `extraction_output`, flips `extraction_status='complete'`. Idempotency check hardened to prevent silent retry short-circuit.
 - `tasks/film_processing.py::run_chunk_synthesis` — rewritten. Concatenates per-chunk extractions, appends roster, runs Prompt 0B via Gemini Flash, UPSERTs `film_analysis_cache.synthesis_document`.
-- `_load_preprocess_prompt` stub helper — translates `FileNotFoundError` into `NotImplementedError` with a clear pointer back to this blocker. Dead letter + film-error transition + coach notification all fire correctly on retry exhaustion.
-- `AGENTS.md` updated — Prompt 0B is documented as Flash (matches code).
+- `_load_preprocess_prompt` stub helper — translated `FileNotFoundError` into `NotImplementedError` while the prompt files were missing. Still in place; now passes through to real `load_prompt()` output since the files exist.
+- `AGENTS.md` updated — Prompt 0B documented as Flash (matches code).
 
-**Why this still matters:**
-Option 3 (synthesis-only mode, shipped 2026-04-19) routes sections 1-4 to read the synthesis document instead of the video. Without Prompts 0A and 0B, that document is still empty and sections still hallucinate. Task 3.17 cannot close until both prompt files exist and produce substantive synthesis.
+**What this unlocks:**
+Option 3 (synthesis-only mode, shipped 2026-04-19) routes sections 1-4 to read the synthesis document instead of the video. With Prompts 0A and 0B now on disk, the synthesis document will be non-empty for the first time. Task 3.17 eval can proceed: re-process a golden film end-to-end, confirm `synthesis_document` is substantive, run a report against it, grade against ground truth.
 
-**Resolution:**
-1. Write Prompt 0A — Gemini watches one 20-25 min chunk, outputs structured per-possession scouting notes (plays, coverages, tendencies, jersey numbers). Include chunk metadata (index / total / start_min / end_min) in the prompt header.
-2. Write Prompt 0B — Gemini reads all chunk extractions + roster, outputs one consolidated scouting breakdown keyed to the 6 downstream sections' needs.
-3. Rebuild worker: `docker compose up -d --build api worker` to pick up the wired pipeline.
-4. Re-process one test film. Inspect `film_chunks.extraction_output` (should be thousands of chars per chunk) and `film_analysis_cache.synthesis_document` (should be a rich consolidated breakdown). Iterate on the prompts if thin.
-5. Re-run a report. If content reflects the synthesis accurately, close 3.17.
-
-This is prompt-engineering work Tommy owns — see `TRAINING.md` sections 4 and 7 for method.
+**Open follow-up (not a blocker):**
+v1.0 prompt text is straight from PROMPTS.md spec — it has never been validated against real golden-set film. First Stage 1 grading session will likely surface specific weaknesses (missing action types, weak count discipline, hallucinated jersey numbers, etc.) that motivate a v1.1. This is the eval-loop work, not unresolved blocker work.
 
 ---
-
-## RESOLVED BLOCKERS
 
 ### Gemini Context Caching Quota = 0 — RESOLVED via synthesis-only mode (2026-04-19)
 
@@ -926,7 +1070,7 @@ The existing Phase 4 admin corrections UI (`/admin`) is ~60% of what's needed bu
 
 **Gate to Stage 2:** Golden scores hit bar on 3 consecutive iterations.
 
-**Current state:** In progress. **Ground-truth corpus complete (5/5 films) as of 2026-05-12.** Still blocked on Prompts 0A / 0B (see ACTIVE BLOCKERS) before TEX can produce any output to grade. Internal grading UI is a parallel workstream Tommy can ship any time — does not depend on 0A/0B being written first, but now has 5 fully-written ground truth docs ready to diff against.
+**Current state:** In progress. **Ground-truth corpus complete (5/5 films) and Prompts 0A + 0B on disk at `VERSION: v1.0` (as of 2026-05-12, late afternoon).** Stage 1 is no longer code-blocked. Next concrete step: smoke-test Film 01 through the full pre-processing + report pipeline, then begin scored grading once synthesis quality passes the smell test. Internal grading UI is a parallel workstream — should be built before grading films 02-05 since per-film grading time drops from ~3-4 hours (spreadsheet) to ~20-40 min (UI).
 
 **Ground-truth corpus (all 5 docs complete on disk):**
 - `golden_set/film_01_bbe_vs_team_durant/ground_truth.md`
@@ -1371,4 +1515,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: May 12, 2026 (afternoon) — Film 05 ground truth (La Lumiere vs Oak Hill) complete. Golden-set ground-truth corpus is now 5/5 — Stage 1 definition-of-done item #1 met. Stage 1 remains blocked on Prompts 0A/0B before TEX can produce gradable output. Prior session: April 20, 2026 (evening) — Commercial Readiness Ladder added; engineering pipeline wiring + idempotency fix + migration 016 apply.*
+*Last updated: May 12, 2026 (late afternoon) — Prompts 0A + 0B saved to disk at `VERSION: v1.0` from PROMPTS.md spec. Phase 2 pre-processing pipeline is now executable end-to-end on real film for the first time. ACTIVE BLOCKERS section is empty for the first time since 2026-04-13 (Gemini caching bug discovery). Next: smoke-test Film 01 → inspect synthesis_document quality → either iterate prompts to v1.1 or move into scored Stage 1 grading. Prior session (afternoon): Film 05 ground truth complete, golden-set corpus 5/5.*

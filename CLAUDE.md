@@ -467,15 +467,16 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 > Claude Code updates this section at the end of every session.
 > Tommy also updates manually when needed.
 
-**Current Phase:** 3 — Report Generation (Phase 4 code also complete); Phase 2 pre-processing wired but awaiting prompt text. **Golden-set ground-truth corpus is now complete (5/5 films) as of 2026-05-12.**
-**Active Task:** Draft Prompts 0A + 0B (`backend/prompts/chunk_extraction.txt`, `chunk_synthesis.txt`). All wiring is in place — both tasks raise `NotImplementedError` until the prompt files exist. **Ground truth is no longer a blocker** — all 5 hand-written `ground_truth.md` docs are on disk and ready to diff against TEX outputs.
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Phase 2 pre-processing on real film (Film 04 — Montverde vs Brewster, 1.95 GB) is unblocked through synthesis:** `services/ai/gemini.py::_get_dev_client()` passes `http_options=types.HttpOptions(timeout=300_000)` (5 min). **Prompt 0A/0B on disk are `VERSION: v1.6`** (`backend/prompts/chunk_extraction.txt`, `chunk_synthesis.txt`); cache key from `services/prompt_versions.py` is `{offensive_sets_version}|{preprocess_version}` (today **`v1.0|v1.6`** when chunk extraction and synthesis headers match). A Prompt 0B run on **prior** prompt revisions produced a **~16.9K char** full-game intelligence doc (local snapshot `tmp_synthesis_document.txt`, 2026-05-13 UTC) for film `e21a5d8a-f390-4e27-a314-0de875239d09`; **Neon/cache must be re-run** to ingest v1.6 rules.
+**Active Task:** **Formal text quality gate (Stage 1):** (1) **`extract_chunk` ×4 + `run_chunk_synthesis`** on Film 04 so Neon matches **`v1.6`** preprocess (prior rows were **v1.5 or older** — they do not pick up new rules silently). (2) Smell-test extraction + synthesis against `golden_set/film_04_montverde_vs_brewster/ground_truth.md`. (3) If quality holds → **`generate_report` smoke on Film 04** (six sections + PDF) and close Phase **3.17** eval; if thin → tighten prompts vs golden gaps.
 **Completed:**
 - Phase 0: All 12 context documents written.
 - Phase 1: All 18 tasks complete. Eval passed April 4, 2026.
-- Phase 2: File flow + Prompt 0A/0B **wiring** complete (2026-04-20). Prompt text not yet written. Migration 016 applied to Neon dev (2026-04-20 evening).
-- Phase 3: Tasks 3.1-3.16 built. 3.17 eval depends on Prompts 0A/0B producing real synthesis documents.
+- Phase 2: File flow + Prompt 0A/0B wiring complete (2026-04-20). Migration 016 applied to Neon dev (2026-04-20 evening). **`backend/prompts/chunk_extraction.txt` + `chunk_synthesis.txt` at `VERSION: v1.6` (2026-05-14)** — adds canonical offensive geometry buckets, tempo summaries per chunk, defended-PnR N discipline + confidence caps in synthesis, multi-source final score ladder + insufficient path, opponent standout tied to OTD/separation signals; builds on **v1.5** reactive-zone and thin-sample work. Canonical copy lives in `.txt` files; PROMPTS.md §Prompt 0 carries a baseline mirror plus pointers. **`film_analysis_cache.prompt_version` derives from prompt file headers** via `services/prompt_versions.py` (Tommy bumps only `VERSION:` lines in `.txt` files).
+- Phase 3: Tasks 3.1-3.16 built. **3.17 eval:** synthesis-document path proven (~17K chars); **still pending**: compare to golden Film 04 + **`generate_report`** chord + PDF sniff test.
 - Phase 4: Tasks 4.1-4.11 built. 4.12 eval needs real report data.
-- **Golden set (Stage 1 prep):** All 5 ground truth docs complete on disk — Films 01 (BBE vs Team Durant), 02 (Rebels vs AZ Unity), 03 (Spire vs La Lumiere), 04 (Montverde vs Brewster), 05 (La Lumiere vs Oak Hill, completed 2026-05-12). Definition-of-done item #1 for Stage 1 of the Commercial Readiness Ladder is met.
+- **Golden set (Stage 1 prep):** All 5 ground truth docs complete on disk — Films 01 (BBE vs Team Durant), 02 (Rebels vs AZ Unity), 03 (Spire vs La Lumiere), 04 (Montverde vs Brewster), 05 (La Lumiere vs Oak Hill, completed 2026-05-12). Definition-of-done item #1 for Stage 1 of the Commercial Readiness Ladder is met. **Prompts 0A + 0B at v1.6 on disk** — item #2 **advanced**: first substantive synthesis doc captured locally on earlier rev (~17K chars); **re-run preprocess + formal grading vs golden + report chord still pending**.
+- **Film 04 pipeline (2026-05-12 → 2026-05-13):** `process_film` + four `extract_chunk` runs succeeded on real 1.95 GB film (~44 min FFmpeg in Docker for Mac — slow vs native). Initial `run_chunk_synthesis` attempts failed at **SDK default HTTP timeout (~60s)**. **Fix landed:** `_get_dev_client()` uses **`types.HttpOptions(timeout=300_000)`**. Subsequent Prompt 0B (Flash, text-only) succeeded; snapshot in repo: `tmp_synthesis_document.txt`. **Neon preprocess rows must catch up** to **`v1.6`** on disk — re-run extractions + synthesis after each prompt bump so tags propagate.
 
 **Key config notes:**
 - Local ports: frontend=3000, API=8001, Redis=6380 (remapped due to conflicts)
@@ -485,11 +486,13 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 - Dev-only POST /dev/seed-user replaces Clerk webhook in local dev (ngrok unreliable)
 - Upload page fetches fresh JWT after R2 upload completes (Clerk tokens expire in ~60s)
 - Gemini SDK is `google-genai` (>=1.0,<2.0). Old `google-generativeai` is deprecated — never re-add it.
+- **`google-genai`:** Always pass **`http_options=types.HttpOptions(timeout=300_000)`** (5 min, milliseconds) on **`genai.Client()`** in `services/ai/gemini.py::_get_dev_client()`. The SDK default (~60s) is too short for Prompt 0A on long chunks and Prompt 0B on large context; without the override, **`RemoteDisconnected('Remote end closed connection without response')`** burns retries. **Applied in repo as of 2026-05-13 / doc sync 2026-05-14.**
 - Rate limiter has separate buckets per Gemini concern: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-file-api` (10/min for File API uploads — do not share with prompt buckets).
 - pydyf pinned to 0.11.* (WeasyPrint 62.3 incompatible with pydyf 0.12.x)
 - 8 Celery tasks registered across 4 queues (added assemble_and_deliver in Phase 3)
+- **FFmpeg compression in Docker for Mac is ~10x slower than native** (no VideoToolbox hardware acceleration inside the Linux VM). Empirically: 1.95 GB H.264 1080p → 720p re-encode took ~40 min in Docker vs. expected ~5 min on native macOS. For dev iterations on golden-set films, either (a) pre-compress to <1.8 GB so `process_film` skips compression entirely (the >1.8 GB threshold gates that branch in `tasks/film_processing.py` per AGENTS.md step 8), or (b) run FFmpeg natively for dev. **Production Cloud Run workers do not have this issue** — Linux x264 software encoding is fast enough on Cloud Run's CPU allocations. Not a prod blocker.
 
-**Last Updated:** May 12, 2026 (afternoon — Film 05 ground truth complete; golden-set ground-truth corpus 5/5)
+**Last Updated:** May 14, 2026 — preprocess prompts bumped to **`v1.6`** (0A/0B on disk); SDK HTTP-timeout fix unchanged; **next:** re-run Film 04 preprocess at v1.6, smell-test golden, then **`generate_report`** (Phase 3.17).
 
 ---
 

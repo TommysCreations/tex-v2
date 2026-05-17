@@ -683,6 +683,8 @@ Without the film_id prefix, two concurrent tasks writing `chunk_001.mp4` overwri
 
 ## REPORT GENERATION PIPELINE
 
+**Implementation note (2026-05-14):** The numbered flow below was written for the **original** design: **Gemini Context Caching** over **chunk File-API URIs**, with sections 1–4 reading **video** from a shared cache handle. **Current code** uses **synthesis-only mode (Option 3)** in **`services/ai/gemini.py`**: **`create_context_cache()`** returns a **sentinel** encoding **`synthesis_document` + roster** (text). Sections **1–4** call **`analyze_video_cached()`**, which sends **[text context, prompt]** to **Gemini 2.5 Pro** — **no** multi-chunk video payload on that path. **Prompt 0A** still uses File API per chunk during **`extract_chunk`**. When Google’s cache API is viable again, the diagram can be re-aligned; until then, treat **`gemini.py`** as source of truth.
+
 ```
 1. generate_report task receives report_id
 2. Fetch report + associated film_ids + roster from DB

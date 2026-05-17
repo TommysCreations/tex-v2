@@ -30,6 +30,7 @@ from services.ai.router import get_ai_provider, get_fallback_provider
 from services.db import get_connection
 from services.pdf import assemble_pdf
 from services.prompts import load_prompt
+from services.prompt_versions import get_film_analysis_cache_prompt_version
 from services.gemini_files import delete_gemini_file
 from services.r2 import delete_from_r2, upload_bytes_to_r2
 from services.rate_limit import acquire_gemini_slot
@@ -107,9 +108,7 @@ def _mark_report_error(report_id: str, message: str) -> None:
 
 
 def _try_section_cache_hit(
-    report_id: str,
     film_rows: list,
-    prompt_version: str,
 ) -> dict | None:
     """Check film_analysis_cache for a complete set of sections 1-4.
 
@@ -117,6 +116,9 @@ def _try_section_cache_hit(
     single-film reports where the film has a file_hash and the cache
     contains all 4 parallel section types with non-empty string content.
     Multi-film reports always fall through to normal flow.
+
+    Uses ``get_film_analysis_cache_prompt_version()`` so cache rows stay
+    aligned with both section prompts and Prompts 0A/0B.
     """
     if len(film_rows) != 1:
         return None
@@ -125,13 +127,14 @@ def _try_section_cache_hit(
     if not file_hash:
         return None
 
+    cache_pv = get_film_analysis_cache_prompt_version()
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT sections FROM film_analysis_cache "
                 "WHERE file_hash = %s AND prompt_version = %s",
-                (file_hash, prompt_version),
+                (file_hash, cache_pv),
             )
             row = cur.fetchone()
     finally:
@@ -253,6 +256,7 @@ def generate_report(self, report_id: str):
         # 5. Collect chunk URIs + synthesis documents for every film.
         all_chunk_uris: list[str] = []
         synthesis_parts: list[str] = []
+        cache_pv = get_film_analysis_cache_prompt_version()
         conn = get_connection()
         try:
             for film_id, _, file_hash in film_rows:
@@ -264,7 +268,7 @@ def generate_report(self, report_id: str):
                         cur.execute(
                             "SELECT synthesis_document FROM film_analysis_cache "
                             "WHERE file_hash = %s AND prompt_version = %s",
-                            (file_hash, prompt_version),
+                            (file_hash, cache_pv),
                         )
                         row = cur.fetchone()
                     if row and row[0]:
@@ -283,10 +287,11 @@ def generate_report(self, report_id: str):
         roster_text = format_roster_for_prompt(team_id)
 
         # 6.5. Section cache short-circuit — single-film regeneration at
-        # same prompt_version. Skips Gemini entirely for sections 1-4 by
+        # same `film_analysis_cache` key (section + preprocess prompts).
+        # Skips Gemini entirely for sections 1-4 by
         # reading cached outputs from film_analysis_cache. Sections 5-6
         # still run normally via run_synthesis_sections.
-        cached_sections = _try_section_cache_hit(report_id, film_rows, prompt_version)
+        cached_sections = _try_section_cache_hit(film_rows)
         if cached_sections is not None:
             file_hash = film_rows[0][2]
             log.info(
@@ -653,7 +658,6 @@ def _run_text_section(
 def _cache_section_outputs(
     report_id: str,
     section_rows: dict,
-    prompt_version: str,
 ) -> None:
     """Write completed sections 1-4 to film_analysis_cache for future cache hits."""
     sections = {}
@@ -684,10 +688,11 @@ def _cache_section_outputs(
                 return
             file_hash = row[0]
 
+            cache_pv = get_film_analysis_cache_prompt_version()
             cur.execute(
                 "UPDATE film_analysis_cache SET sections = %s "
                 "WHERE file_hash = %s AND prompt_version = %s",
-                (json.dumps(sections), file_hash, prompt_version),
+                (json.dumps(sections), file_hash, cache_pv),
             )
         conn.commit()
     finally:
@@ -805,7 +810,7 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
         )
 
         # 9. Cache sections 1-4 content in film_analysis_cache.
-        _cache_section_outputs(report_id, section_rows, prompt_version)
+        _cache_section_outputs(report_id, section_rows)
 
         # 10. Enqueue assemble_and_deliver.
         assemble_and_deliver.delay(report_id)

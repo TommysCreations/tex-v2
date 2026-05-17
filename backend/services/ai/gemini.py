@@ -65,9 +65,17 @@ class GeminiProvider(AIVideoProvider):
     # -----------------------------------------------------------------
     def _get_dev_client(self):
         from google import genai
+        from google.genai import types
 
         if self._dev_client is None:
-            self._dev_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+            # 300s timeout (vs. SDK default ~60s) — needed because Prompt 0B
+            # synthesis on Gemini Flash and Prompts 1-4 on Pro routinely take
+            # 60-120s for long inputs. Without this, every long call dies with
+            # RemoteDisconnected and burns Celery retries. SDK takes ms.
+            self._dev_client = genai.Client(
+                api_key=os.environ["GEMINI_API_KEY"],
+                http_options=types.HttpOptions(timeout=300_000),
+            )
         return self._dev_client
 
     # -----------------------------------------------------------------

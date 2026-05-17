@@ -13,14 +13,13 @@ from services.db import get_connection
 from services.ffmpeg import FFmpegError, compress_film, split_film
 from services.ffprobe import FilmValidationError, get_duration, validate_film_file
 from services.gemini_files import GeminiUploadError, upload_to_gemini
+from services.prompt_versions import get_film_analysis_cache_prompt_version
 from services.prompts import load_prompt
 from services.r2 import download_from_r2, upload_to_r2
 from services.rate_limit import acquire_gemini_slot
 from services.roster_format import format_roster_for_prompt
 
 log = logging.getLogger(__name__)
-
-PROMPT_VERSION = "v1.0"
 
 
 def _load_preprocess_prompt(section_type: str) -> tuple[str, str]:
@@ -118,6 +117,90 @@ def _backoff(retry_number: int) -> int:
     if retry_number < len(delays):
         return delays[retry_number]
     return delays[-1]
+
+
+def _chunk_film_runtime_minute_bounds(film_id: str, chunk_index: int) -> tuple[str, str]:
+    """Minute offsets into the uploaded video file for this chunk (not arena game clock).
+
+    Sums duration_seconds of prior chunks from Neon so Gemini sees an accurate segment span.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_index, duration_seconds FROM film_chunks "
+                "WHERE film_id = %s ORDER BY chunk_index",
+                (film_id,),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    start_sec = sum(d for idx, d in rows if idx < chunk_index)
+    chunk_dur = next((d for idx, d in rows if idx == chunk_index), None)
+    if chunk_dur is None:
+        log.warning(
+            "_chunk_film_runtime_minute_bounds: chunk_index=%s missing for film_id=%s — using 0.0–0.0",
+            chunk_index,
+            film_id,
+        )
+        return ("0.0", "0.0")
+
+    end_sec = start_sec + chunk_dur
+    return (f"{start_sec / 60.0:.1f}", f"{end_sec / 60.0:.1f}")
+
+
+def _build_chunk_extraction_prompt(
+    prompt_template: str,
+    film_id: str,
+    chunk_index: int,
+) -> str:
+    """Substitute roster + chunk metadata into Prompt 0A before video analysis."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT team_id, chunk_count FROM films WHERE id = %s",
+                (film_id,),
+            )
+            film_row = cur.fetchone()
+    finally:
+        conn.close()
+
+    team_id = film_row[0] if film_row else None
+    chunk_count_col = film_row[1] if film_row else None
+
+    roster_text = (
+        format_roster_for_prompt(team_id)
+        if team_id
+        else "(no roster data available)"
+    )
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM film_chunks WHERE film_id = %s",
+                (film_id,),
+            )
+            n_chunks = cur.fetchone()[0]
+    finally:
+        conn.close()
+
+    total_chunks = chunk_count_col if chunk_count_col is not None else n_chunks
+    if not total_chunks:
+        total_chunks = max(1, n_chunks)
+
+    start_min, end_min = _chunk_film_runtime_minute_bounds(film_id, chunk_index)
+    chunk_human = chunk_index + 1
+
+    return prompt_template.format(
+        chunk_index=chunk_human,
+        total_chunks=int(total_chunks),
+        start_min=start_min,
+        end_min=end_min,
+        roster=roster_text,
+    )
 
 
 def _fail_film_from_chunk(film_id: str, error_message: str):
@@ -221,13 +304,14 @@ def process_film(self, film_id: str):
             conn.close()
 
         # 5. Check film_analysis_cache for this hash + prompt_version
+        cache_pv = get_film_analysis_cache_prompt_version()
         conn = get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT id FROM film_analysis_cache "
                     "WHERE file_hash = %s AND prompt_version = %s",
-                    (file_hash, PROMPT_VERSION),
+                    (file_hash, cache_pv),
                 )
                 cache_hit = cur.fetchone()
         finally:
@@ -489,10 +573,17 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
         # 3. Run Prompt 0A against this chunk's video.
         # Loader raises NotImplementedError if the prompt file is not yet
         # written — existing retry + dead letter handlers surface it.
-        prompt_0a, prompt_0a_version = _load_preprocess_prompt("chunk_extraction")
+        prompt_0a_tpl, prompt_0a_version = _load_preprocess_prompt("chunk_extraction")
+        prompt_0a = _build_chunk_extraction_prompt(
+            prompt_0a_tpl, film_id, chunk_index,
+        )
 
-        log.info("extract_chunk: running Prompt 0A (%s) on chunk %d for film %s",
-                 prompt_0a_version, chunk_index, film_id)
+        log.info(
+            "extract_chunk: running Prompt 0A (%s) on chunk %d for film %s",
+            prompt_0a_version,
+            chunk_index,
+            film_id,
+        )
         acquire_gemini_slot("gemini-2.5-pro")
         provider = get_ai_provider()
         extraction_output = provider.analyze_video(
@@ -733,6 +824,7 @@ def run_chunk_synthesis(self, film_id: str):
             _update_film_status(film_id, "error", "Missing file_hash on film row")
             return
 
+        cache_pv = get_film_analysis_cache_prompt_version()
         conn = get_connection()
         try:
             with conn.cursor() as cur:
@@ -744,7 +836,7 @@ def run_chunk_synthesis(self, film_id: str):
                     "synthesis_document = EXCLUDED.synthesis_document, "
                     "film_id = EXCLUDED.film_id, "
                     "prompt_version = EXCLUDED.prompt_version",
-                    (file_hash, film_id, synthesis_document, PROMPT_VERSION),
+                    (file_hash, film_id, synthesis_document, cache_pv),
                 )
             conn.commit()
         finally:

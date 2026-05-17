@@ -109,9 +109,9 @@ The prompt text begins on the line immediately after `---`.
 ## PROMPT 0 — CHUNK SYNTHESIS
 
 **Files:** `backend/prompts/chunk_extraction.txt` + `backend/prompts/chunk_synthesis.txt`
-**Model:** Gemini 2.5 Pro (both stages)
-**Input:** Raw video chunks (extraction) → chunk extraction outputs (synthesis)
-**Output:** A unified full-game intelligence document consumed by sections 1-4 as context
+**Models:** Gemini **2.5 Pro** (Stage 1 — extraction, **video**) + Gemini **2.5 Flash** (Stage 2 — synthesis, **text-only** — see `tasks/film_processing.py::run_chunk_synthesis`; AGENTS.md Prompt 0B).
+**Input:** Raw video chunks (extraction) → concat of chunk extraction outputs + roster (synthesis)
+**Output:** A unified full-game intelligence document stored in **`film_analysis_cache.synthesis_document`** and passed into downstream section generation (see **`services/ai/gemini.py`** — synthesis-only / Option 3: sections **1–4** receive **text** context, not chunk video)
 
 This is the most important prompt engineering problem in the product. Sections 1-4 are only
 as accurate as the foundation they build on. If the synthesis is wrong — miscounted sets,
@@ -154,22 +154,16 @@ Film chunks uploaded to Gemini File API
     │   ├── chunk_002: extraction output → saved to DB
     │   └── chunk_003: extraction output → saved to DB
     │
-    └── Synthesis pass (one call, text-in text-out, Gemini 2.5 Pro)
+    └── Synthesis pass (one call, text-in text-out, Gemini 2.5 Flash)
             Input: all chunk extraction outputs + roster
             Output: unified game intelligence document
-            Saved to: film_analysis_cache.synthesis_document (new column, Phase 2 addition)
-                      and prepended to context cache before sections 1-4 fire
+            Saved to: film_analysis_cache.synthesis_document (Phase 2+)
+                      passed as text alongside roster when sections 1-4 generate (Option 3)
 ```
 
-The synthesis document is stored in the film analysis cache alongside sections 1-4.
-If the film hash matches an existing cache entry, the synthesis document is retrieved directly —
-no re-extraction, no re-synthesis. Same cache invalidation rules apply: stale on prompt version change.
+The synthesis document is stored in **`film_analysis_cache`** and keyed by **`file_hash`** + composite **`prompt_version`** from **`services/prompt_versions.py`** (section bundle + preprocess headers).
 
-The synthesis document is prepended to the context cache that sections 1-4 receive. Sections 1-4
-are still watching the raw video (via the cache URI) — the synthesis document adds structured
-prior knowledge so each section prompt does not need to re-derive full-game frequency counts
-from scratch. The video is the ground truth. The synthesis document is the structured summary.
-Sections 1-4 use both. Neither replaces the other.
+**Downstream consumption (today — synthesis-only mode / Option 3):** Sections **1–4** do **not** re-read chunk video together with the synthesis document. **`create_context_cache()`** carries **synthesis + roster as text only** (see **`services/ai/gemini.py`**). The **`vertex:no-cache:`** sentinel path routes **`analyze_video_cached()`** to a **Gemini 2.5 Pro** prompt that reads **[text_context, prompt]** — the model's "ground truth window" for the game is the **synthesis document plus section prompt discipline**, not the raw film. *If* Google context caching for multi-chunk video is restored in the future, this document may again be **prepended** alongside video; the spec text below was written for that world—**the repo code path is authoritative.**
 
 ---
 
@@ -177,10 +171,13 @@ Sections 1-4 use both. Neither replaces the other.
 
 **File:** `backend/prompts/chunk_extraction.txt`
 
+**Canonical text (2026-05-14):** The live prompt in git is the source of truth — **`VERSION: v1.5`** on disk. The fenced copy below is the **v1.0 baseline** mirror from early Phase 2; it does **not** include later rules (e.g. **REACTIVE-VS-ZONE** tagging, explicit thin-sample language for ball-screen coverage). Read the **`.txt`** file before judging production behavior.
+
 ```
-VERSION: v1.0
+VERSION: v1.5 (see .txt file — mirror below is v1.0 baseline only)
 CHANGELOG:
-  v1.0 — Initial version.
+  v1.5 — REACTIVE-VS-ZONE tag; ball-screen coverage thin-sample language when opponent PnR sample is small; other reconciliation hygiene (see ROADMAP 2026-05-13).
+  v1.0 — Initial version (body below).
 ---
 You are analyzing one segment of a complete basketball game film.
 This segment is chunk {chunk_index} of {total_chunks}, covering approximately minutes {start_min} to {end_min}.
@@ -256,10 +253,13 @@ from `film_chunks.chunk_index` and `film_chunks.duration_seconds`.
 
 **File:** `backend/prompts/chunk_synthesis.txt`
 
+**Canonical text (2026-05-14):** Same as Stage 1 — live **`VERSION: v1.5`** in **`chunk_synthesis.txt`**. Fenced body below is the **v1.0** mirror; synthesis rules evolved (e.g. **base vs reactive zone offense** splits). Read the **`.txt`** file for exact instructions.
+
 ```
-VERSION: v1.0
+VERSION: v1.5 (see .txt file — mirror below is v1.0 baseline only)
 CHANGELOG:
-  v1.0 — Initial version.
+  v1.5 — Pair with **v1.5** extraction (reactive zone split, aggregate hygiene); see ROADMAP 2026-05-13.
+  v1.0 — Initial version (body below).
 ---
 You are synthesizing multiple observation logs from consecutive segments of a basketball game
 into a single, unified full-game intelligence document.
@@ -464,8 +464,8 @@ Both outcomes are valuable training signals.
 
 ---
 
-*Last updated: Phase 0 — Context Engineering*
-*Prompt 0 versions: chunk_extraction v1.0, chunk_synthesis v1.0*
+*Last updated: 2026-05-14 — Prompt 0 disk versions **v1.5**; PROMPTS.md §STAGE 1/2 fences marked as v1.0 baseline mirrors; canonical bodies in **`backend/prompts/*.txt`***
+*Production Prompt 0 pair: **`chunk_extraction` v1.5 + `chunk_synthesis` v1.5** (must stay aligned unless intentionally split with `prompt_versions.py` composite key).*
 *This is the highest-priority prompt to iterate on. Accuracy here determines accuracy everywhere.*
 
 ---
