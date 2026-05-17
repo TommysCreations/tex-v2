@@ -536,6 +536,19 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-020 — Branch protection on main
+
+**Date:** 2026-05-17
+**Status:** Adopted
+
+**Decision:** Enabled GitHub branch protection on `main`. Direct pushes blocked. Merges require a PR with all three CI status checks passing (`scan` from gitleaks.yml, `lint-and-compile` from backend.yml, `typecheck-and-build` from frontend.yml), branch up-to-date with main (`strict: true`), and linear history. Admin bypass disabled (`enforce_admins: true`). Force-push and deletion disabled. Additionally enabled the repo-level `delete_branch_on_merge: true` setting via `PATCH /repos/aidn31/tex-v2` so merged PR branches auto-delete from origin.
+
+**Rationale:** Closes audit finding C1 (direct-push hole) and the auto-delete half of I4 (stale-branch accumulation). The three CI contexts define the minimum bar — secrets scan, backend lint + compile, frontend typecheck + build — that every change to main must clear. Strict mode forces rebase-before-merge, preserving linear history (per D-019's hygiene posture). Required-approving-review-count is 0 because this is a solo repo — Tommy cannot self-approve, and adding a "1 review required" rule would deadlock all merges. `delete_branch_on_merge` paired with the I4 stale-branch deletions resolves the full I4 finding: past stale branches removed, future stale-branch accumulation structurally prevented.
+
+**Tradeoff:** With admin bypass disabled, emergency hotfixes require temporarily disabling protection via the API (`gh api --method DELETE /repos/aidn31/tex-v2/branches/main/protection`, hotfix, then re-PUT the same JSON) rather than force-pushing. Acceptable for a solo proprietary repo with no live customers — the operational cost is small and the structural guarantee is large. Revisit if first paying customer onboards and incident response time becomes load-bearing.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -554,5 +567,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 17, 2026 — D-019 added (pre-commit + gitleaks for local secret prevention).*
-*19 decisions logged. All decisions current as of this date.*
+*Last updated: May 17, 2026 — D-020 added (branch protection on main).*
+*20 decisions logged. All decisions current as of this date.*
