@@ -1,0 +1,52 @@
+# Frontend CI — runs on PRs that touch frontend/ or this workflow.
+#
+# Scope in PR 3: install deps (npm ci against package-lock.json), TypeScript
+# typecheck (no `any` per CLAUDE.md rules), production Next.js build (catches
+# missing imports, broken JSX, env-var typos at build time). ESLint lands in
+# PR 4 alongside eslint.config.mjs and the matching pre-commit hook.
+#
+# All third-party actions pinned to major versions; Dependabot proposes
+# weekly bumps in the github-actions ecosystem.
+
+name: frontend
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Next.js production build
+        # `next build` runs the type-checker and bundler. Treated as a gate
+        # because a green build is the minimum-viable correctness signal for
+        # a Next.js app before PR 4 adds explicit eslint.
+        run: npm run build

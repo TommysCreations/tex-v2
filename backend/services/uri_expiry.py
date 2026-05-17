@@ -1,7 +1,6 @@
 import logging
 import os
 
-from services.db import get_connection
 from services.gemini_files import upload_to_gemini
 from services.r2 import download_from_r2
 

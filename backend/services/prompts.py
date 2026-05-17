@@ -10,7 +10,6 @@ documented in PROMPTS.md → HOW PROMPTS ARE LOADED:
 The `---` delimiter is on its own line. Everything after it is the prompt body.
 """
 
-import os
 from pathlib import Path
 
 # backend/prompts/ is a sibling of services/
