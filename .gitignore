@@ -49,3 +49,19 @@ Thumbs.db
 
 # Dev-only helpers
 scripts/test_checkout.sh
+
+# Secrets and credentials (root-level guardrails; backend/.gitignore also covers credentials/)
+*.pem
+*.key
+*-service-account*.json
+**/credentials/
+!.env.example
+
+# Coverage
+.coverage
+htmlcov/
+
+# Local AI / preprocess scratch artifacts (chunk extraction output, synthesis docs)
+tmp_*.txt
+tmp_*.md
+backend/tmp_*.txt
