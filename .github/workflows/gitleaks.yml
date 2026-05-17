@@ -1,0 +1,36 @@
+# Secrets scan — runs on every PR and every push to main.
+#
+# Mirrors the local pre-commit gitleaks hook (.pre-commit-config.yaml). Pinned
+# to the same gitleaks tool version (v8.21.2) so a commit that passes locally
+# also passes here — no surface drift between developer machine and CI.
+#
+# gitleaks-action v2 is free for personal accounts (aidn31/tex-v2). For org
+# accounts a GITLEAKS_LICENSE secret would be required.
+
+name: gitleaks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so gitleaks can scan every commit on the PR, not just
+          # the latest snapshot. Required for catching secrets that were added
+          # then "deleted" in a later commit but remain in history.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pin tool version to the same one referenced by the pre-commit hook.
+          # Bump both in lockstep when updating.
+          GITLEAKS_VERSION: 8.21.2
