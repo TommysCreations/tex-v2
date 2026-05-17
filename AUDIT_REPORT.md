@@ -14,9 +14,11 @@ Findings are grouped by severity. Each one lists **Problem / Fix / Effort (S/M/L
 | Severity      | Count |
 |---------------|-------|
 | 🔴 Critical   | 4     |
-| 🟡 Important  | 8     |
+| 🟡 Important  | 9     |
 | 🟢 Polish     | 4     |
-| **Total**     | **16** |
+| **Total**     | **17** |
+
+> **Update 2026-05-17 evening:** I9 added when PR 1 setup surfaced that `main` was 20 commits behind active development. **Resolved before PR 1 opened** — see I9 below.
 
 **Top 3 to fix first:**
 
@@ -238,6 +240,20 @@ Then add the same key under "SSH signing keys" on his GitHub account.
 
 ---
 
+### I9 — `main` was 20 commits behind active development; resolved by rebase + FF prior to PR 1
+
+**Problem (discovered post-audit, 2026-05-17 evening):** When PR 1 setup tried to branch from `main`, the worktree had no `.gitignore`, no backend code, and an old ROADMAP — because `main` was at `b87d928` (Apr 4, 2026 — a merge commit bringing in Phase 1 Foundation via `feature/repo-scaffold`) while all Phase 2 / Phase 3 / Phase 4 work lived only on `feature/phase-3`. Divergence shape: `main` had 1 commit `feature/phase-3` didn't (the merge commit), and `feature/phase-3` had 20 commits `main` didn't. Practical impact: every cleanup PR opened against `main` would have generated immediate merge conflicts with `feature/phase-3`, and PR 2's branch-protection rules + PR 3's CI status checks would have been protecting a stale branch with no real code in it.
+
+Compounding finding: the audit's `git for-each-ref refs/remotes/` query read cached local refs, not the live remote. At audit time the local `origin/main` was even more stale (`e94ece1`, Apr 3) than the real remote (`b87d928`, Apr 4), so the audit summary undercounted the divergence by one commit (reported "37 commits ahead"; the actual count against the live remote was 20 ahead + 1 behind).
+
+**Fix (already applied):** Committed Tommy's in-progress edits on `feature/phase-3` as `cc9ec81` (preprocess prompts v1.6 + SDK HTTP timeout + `prompt_versions` helper + doc sync). Tagged `pre-rebase-phase-3` at that commit as a safety reference (delete only after PR 1 merges). Rebased `feature/phase-3` onto `origin/main` (`b87d928`) — **0 conflicts across 21 replayed commits.** Smoke-tested the rebased tree (`/health` returned 200; `next build` compiled in 5.2s; worker registered all 8 tasks + recovered no stuck jobs). Force-with-lease pushed the rebased branch, strict FF push to `main` (`b87d928..b80d86c main`), deleted the remote `feature/phase-3` branch. `origin/main` is now at `b80d86c` with linear history and contains the full project.
+
+**Process lesson for future audits:** Run `git fetch origin --prune` first and surface `git ls-remote origin main` separately as a cross-check against local cached refs. Adding to methodology.
+
+**Effort:** Resolved.
+
+---
+
 ## 🟢 POLISH
 
 ### P1 — No `README.md`
@@ -303,3 +319,4 @@ Branch staleness derived from `git for-each-ref --sort=-committerdate refs/remot
 ---
 
 *Generated 2026-05-17 on branch `chore/repo-audit`. No fixes applied — Phase 1 (audit) only.*
+*Updated 2026-05-17 evening: I9 added (main sync) — resolved before PR 1.*
