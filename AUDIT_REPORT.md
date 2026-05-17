@@ -40,7 +40,7 @@ PR 5  Documentation   README.md, root .env.example notes, PR template, LICENSE d
 
 ## 🔴 CRITICAL
 
-### C1 — `main` branch is unprotected
+### C1 — `main` branch is unprotected — **RESOLVED by PR 2 (2026-05-17)**
 
 **Problem:** `gh api repos/aidn31/tex-v2/branches/main/protection` returns `404 Branch not protected`. Anyone with push rights can push directly to `main`, force-push history, or bypass PR review. The CLAUDE.md rule "Never push to main directly. Hard limit." is currently enforced by social contract only, not by the platform.
 
@@ -162,7 +162,7 @@ Configs must match what CI runs — diverging configs is a finding in itself.
 
 ---
 
-### I4 — Stale branches not deleted; auto-delete disabled
+### I4 — Stale branches not deleted; auto-delete disabled — **RESOLVED by PR 2 (2026-05-17)**
 
 **Problem:** `delete_branch_on_merge` is `false`. Two long-stale branches sit on the remote:
 - `origin/feature/repo-scaffold` — last commit 2026-04-04 (6 weeks)
