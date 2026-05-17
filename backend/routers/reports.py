@@ -13,8 +13,6 @@ from models.schemas import (
 from services.clerk import get_current_user
 from services.db import get_connection
 from services.payment_gate import (
-    CREDIT,
-    FREE,
     STRIPE_REQUIRED,
     check_payment_gate,
     consume_entitlement,
