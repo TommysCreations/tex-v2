@@ -1,3 +1,4 @@
+# FastAPI entry point. Backend CI gate (D-020): .github/workflows/backend.yml.
 import os
 from contextlib import asynccontextmanager
 
