@@ -19,7 +19,6 @@ import {
   listReports,
   listRoster,
   retryFilm,
-  updatePlayer,
   updateTeam,
 } from '@/lib/api';
 

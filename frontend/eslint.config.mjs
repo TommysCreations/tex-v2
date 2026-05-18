@@ -20,7 +20,7 @@ import tseslint from 'typescript-eslint';
 
 const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
 
-export default [
+const config = [
   // Global ignores — must be a config object with ONLY `ignores` (ESLint 9
   // semantics). Skip generated/build output and the auto-generated Next types
   // file. `node_modules` is excluded by ESLint by default but listed for clarity.
@@ -35,3 +35,5 @@ export default [
     },
   },
 ];
+
+export default config;
