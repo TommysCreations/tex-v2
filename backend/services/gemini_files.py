@@ -100,7 +100,8 @@ def _gcs_credentials():
 
 
 def _get_gcs_client():
-    from google.cloud import storage
+    # TODO(#19): drop type-ignore once google-cloud-storage stub resolution is fixed.
+    from google.cloud import storage  # type: ignore[attr-defined]
 
     project = os.environ["GCP_PROJECT_ID"]
     return storage.Client(project=project, credentials=_gcs_credentials())

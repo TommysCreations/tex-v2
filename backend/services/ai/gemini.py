@@ -286,7 +286,8 @@ class GeminiProvider(AIVideoProvider):
                 )
             model = GenerativeModel(GEMINI_PRO_MODEL)
             parts = [Part.from_text(text_context), Part.from_text(prompt)]
-            response = model.generate_content(parts)
+            # TODO(#20): drop type-ignore once Vertex SDK accepts Sequence[Part].
+            response = model.generate_content(parts)  # type: ignore[arg-type]
         else:
             # unreachable in synthesis-only mode — retained for future
             # re-enablement if Google caching is fixed.
@@ -294,7 +295,9 @@ class GeminiProvider(AIVideoProvider):
             from vertexai.preview.generative_models import GenerativeModel as PreviewModel
 
             cached = caching.CachedContent(cached_content_name=cache_uri)
-            model = PreviewModel.from_cached_content(cached_content=cached)
+            # TODO(#21): drop type-ignore once Vertex SDK aligns public/internal
+            # GenerativeModel types.
+            model = PreviewModel.from_cached_content(cached_content=cached)  # type: ignore[assignment]
             response = model.generate_content(prompt)
 
         usage = getattr(response, "usage_metadata", None)
@@ -356,7 +359,8 @@ class GeminiProvider(AIVideoProvider):
         parts.append(Part.from_text(prompt))
 
         model = GenerativeModel(GEMINI_PRO_MODEL)
-        response = model.generate_content(parts)
+        # TODO(#22): drop type-ignore once Vertex SDK accepts Sequence[Part].
+        response = model.generate_content(parts)  # type: ignore[arg-type]
 
         usage = getattr(response, "usage_metadata", None)
         if usage:
