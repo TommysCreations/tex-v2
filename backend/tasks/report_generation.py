@@ -1083,7 +1083,6 @@ def assemble_and_deliver(self, report_id: str):
 
             now = datetime.now(UTC)
             if created_at.tzinfo is None:
-
                 created_at = created_at.replace(tzinfo=UTC)
             generation_seconds = int((now - created_at).total_seconds())
 
