@@ -583,6 +583,21 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-022 — Repository documentation
+
+**Date:** 2026-05-18
+**Status:** Adopted
+
+**Decision:** Added `README.md` at repo root (front door only — no duplication of canonical docs), `frontend/.env.example` (mirrors `backend/.env.example` for parity), and `.github/pull_request_template.md` (short checklist). No `LICENSE` — repo is proprietary, all rights reserved.
+
+**Rationale:** Closes audit findings P1 (no README), P3 (no PR template), P4 (no frontend `.env.example`). Tommy explicitly chose to leave LICENSE absent rather than add MIT/Apache (P2 — closed by decision, not by file).
+
+**README scope:** Strictly a front door. Any temptation to summarize architecture, stack, or roadmap in README is wrong — those have their own files, and duplication creates drift. Anything beyond "what is TEX, how to run it, where to read next" belongs elsewhere. The PR 4 README that introduced a "Local development" section is superseded by PR 5's wholesale-replacement README; the same essential content is preserved, but the structure now matches the front-door scope this entry codifies.
+
+**`frontend/.env.example` scope:** Document every env var actually referenced by the frontend code today. Reserved-but-unused vars (Stripe publishable key, PostHog) are commented-out with a short note on what unlocks them — kept in the file so future contributors know the names, but disabled so they don't read as required.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -601,5 +616,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 17, 2026 — D-021 added (linter and formatter configs).*
-*21 decisions logged. All decisions current as of this date.*
+*Last updated: May 18, 2026 — D-022 added (repository documentation).*
+*22 decisions logged. All decisions current as of this date.*
