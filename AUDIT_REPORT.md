@@ -11,14 +11,18 @@ Findings are grouped by severity. Each one lists **Problem / Fix / Effort (S/M/L
 
 ## SUMMARY
 
-| Severity      | Count |
-|---------------|-------|
-| 🔴 Critical   | 4     |
-| 🟡 Important  | 9     |
-| 🟢 Polish     | 4     |
-| **Total**     | **17** |
+| Severity      | Total | Resolved by PR | Resolved by decision | Closed (skipped per Tommy) | Remaining |
+|---------------|-------|----------------|----------------------|----------------------------|-----------|
+| 🔴 Critical   | 4     | 4              | 0                    | 0                          | 0         |
+| 🟡 Important  | 9     | 7              | 0                    | 2                          | 0         |
+| 🟢 Polish     | 4     | 3              | 1 (P2 — proprietary) | 0                          | 0         |
+| **Total**     | **17** | **14**        | **1**                | **2**                      | **0**     |
+
+**Audit cleanup complete — 0 findings remaining.** Skipped (per Tommy): I5 (`git config user.email` — handled outside repo) and I8 (commit signing — explicitly deferred). Closed by decision: P2 (no LICENSE — proprietary, intentionally absent).
 
 > **Update 2026-05-17 evening:** I9 added when PR 1 setup surfaced that `main` was 20 commits behind active development. **Resolved before PR 1 opened** — see I9 below.
+>
+> **Update 2026-05-18:** Final P1 + P3 + P4 marked resolved by PR 5; P2 marked resolved by decision. All 17 findings now accounted for.
 
 **Top 3 to fix first:**
 
@@ -256,7 +260,7 @@ Compounding finding: the audit's `git for-each-ref refs/remotes/` query read cac
 
 ## 🟢 POLISH
 
-### P1 — No `README.md`
+### P1 — No `README.md` — **RESOLVED by PR 5 (2026-05-18)**
 
 **Problem:** Repo root has no `README.md`. New contributors (or future-Tommy on a fresh checkout) land on a sea of 16 markdown files with no entry point. The canonical docs (`CLAUDE.md`, `ARCHITECTURE.md`, `ROADMAP.md`) are excellent — they just need a 30-line front door.
 
@@ -269,7 +273,7 @@ Compounding finding: the audit's `git for-each-ref refs/remotes/` query read cac
 
 ---
 
-### P2 — No `LICENSE`
+### P2 — No `LICENSE` — **RESOLVED by decision (proprietary, intentionally absent — 2026-05-17)**
 
 **Problem:** No `LICENSE` file. Default = "All rights reserved." This is probably intentional for a proprietary product, but the audit prompt asks us to confirm rather than assume.
 
@@ -279,7 +283,7 @@ Compounding finding: the audit's `git for-each-ref refs/remotes/` query read cac
 
 ---
 
-### P3 — No PR template
+### P3 — No PR template — **RESOLVED by PR 5 (2026-05-18)**
 
 **Problem:** No `.github/pull_request_template.md`. PRs land with whatever description the author writes (or none).
 
@@ -289,7 +293,7 @@ Compounding finding: the audit's `git for-each-ref refs/remotes/` query read cac
 
 ---
 
-### P4 — No frontend `.env.example`
+### P4 — No frontend `.env.example` — **RESOLVED by PR 5 (2026-05-18)**
 
 **Problem:** `backend/.env.example` exists and is complete. There is no `frontend/.env.example` despite the frontend needing `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_API_URL`, and the Stripe publishable key. A new local-setup follows `backend/.env.example` to bring up the API, then has to read code to figure out the frontend env vars.
 
@@ -320,3 +324,4 @@ Branch staleness derived from `git for-each-ref --sort=-committerdate refs/remot
 
 *Generated 2026-05-17 on branch `chore/repo-audit`. No fixes applied — Phase 1 (audit) only.*
 *Updated 2026-05-17 evening: I9 added (main sync) — resolved before PR 1.*
+*Updated 2026-05-18: P1 + P3 + P4 resolved by PR 5; P2 resolved by decision. Audit cleanup complete.*
