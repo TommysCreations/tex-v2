@@ -157,7 +157,8 @@ def _chunk_film_runtime_minute_bounds(film_id: str, chunk_index: int) -> tuple[s
     chunk_dur = next((d for idx, d in rows if idx == chunk_index), None)
     if chunk_dur is None:
         log.warning(
-            "_chunk_film_runtime_minute_bounds: chunk_index=%s missing for film_id=%s — using 0.0–0.0",
+            "_chunk_film_runtime_minute_bounds: chunk_index=%s missing "
+            "for film_id=%s — using 0.0–0.0",
             chunk_index,
             film_id,
         )
@@ -549,7 +550,8 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
         # Gemini re-upload — Prompt 0A is the only work left.
         if gemini_file_state == "active" and existing_uri:
             log.info(
-                "extract_chunk: chunk %s already uploaded (extraction_status=%s), resuming at Prompt 0A",
+                "extract_chunk: chunk %s already uploaded "
+                "(extraction_status=%s), resuming at Prompt 0A",
                 chunk_id,
                 extraction_status,
             )
@@ -816,7 +818,8 @@ def run_chunk_synthesis(self, film_id: str):
             # Gate should have prevented this. If we got here anyway, bail
             # rather than synthesize a partial document.
             log.error(
-                "run_chunk_synthesis: film %s has %d chunks with extraction_status != 'complete' (indexes=%s)",
+                "run_chunk_synthesis: film %s has %d chunks with "
+                "extraction_status != 'complete' (indexes=%s)",
                 film_id,
                 len(incomplete),
                 incomplete,

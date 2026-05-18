@@ -87,7 +87,10 @@ def notify_coach(
                 if row:
                     user_id = row[0]
                     if notification_type == "film_error" and row[1]:
-                        message = f"Your film could not be processed: {row[1]}. Please re-upload or contact support."
+                        message = (
+                            f"Your film could not be processed: {row[1]}. "
+                            "Please re-upload or contact support."
+                        )
             elif report_id:
                 cur.execute("SELECT user_id FROM reports WHERE id = %s", (report_id,))
                 row = cur.fetchone()

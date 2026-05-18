@@ -98,7 +98,8 @@ def validate_film_file(local_path: str) -> dict:
     if not duration_str:
         # Some containers (MKV) don't report duration in format — try nb_frames / r_frame_rate
         raise FilmValidationError(
-            "Could not determine video duration. The file may be corrupted or in an unsupported format."
+            "Could not determine video duration. "
+            "The file may be corrupted or in an unsupported format."
         )
 
     try:
