@@ -66,8 +66,7 @@ async def mark_all_read(user: dict = Depends(get_current_user)):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE notifications SET read_at = now() "
-                "WHERE user_id = %s AND read_at IS NULL",
+                "UPDATE notifications SET read_at = now() WHERE user_id = %s AND read_at IS NULL",
                 (user_id,),
             )
         conn.commit()

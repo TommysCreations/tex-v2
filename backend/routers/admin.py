@@ -24,6 +24,7 @@ router = APIRouter()
 # Schemas
 # ---------------------------------------------------------------------------
 
+
 class CorrectionCreate(BaseModel):
     report_id: str
     film_id: str
@@ -44,6 +45,7 @@ class CreditGrant(BaseModel):
 # ---------------------------------------------------------------------------
 # 4.2 — GET /admin/corrections
 # ---------------------------------------------------------------------------
+
 
 @router.get("/corrections")
 async def list_corrections(
@@ -121,12 +123,20 @@ async def list_corrections(
 # ---------------------------------------------------------------------------
 
 VALID_SECTION_TYPES = {
-    "offensive_sets", "defensive_schemes", "pnr_coverage",
-    "player_pages", "game_plan", "adjustments_practice",
+    "offensive_sets",
+    "defensive_schemes",
+    "pnr_coverage",
+    "player_pages",
+    "game_plan",
+    "adjustments_practice",
 }
 VALID_CATEGORIES = {
-    "set_identification", "player_attribution", "frequency_count",
-    "tendency", "coverage_type", "personnel_evaluation",
+    "set_identification",
+    "player_attribution",
+    "frequency_count",
+    "tendency",
+    "coverage_type",
+    "personnel_evaluation",
     "strategic_reasoning",
 }
 VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -145,7 +155,9 @@ async def create_correction(
     if body.confidence not in VALID_CONFIDENCE:
         raise HTTPException(status_code=400, detail=f"Invalid confidence: {body.confidence}")
     if not body.is_correct and not body.correct_claim:
-        raise HTTPException(status_code=400, detail="correct_claim is required when is_correct is false")
+        raise HTTPException(
+            status_code=400, detail="correct_claim is required when is_correct is false"
+        )
 
     conn = get_connection()
     try:
@@ -198,6 +210,7 @@ async def create_correction(
 # ---------------------------------------------------------------------------
 # 4.4 — GET /admin/pattern-analysis
 # ---------------------------------------------------------------------------
+
 
 @router.get("/pattern-analysis")
 async def pattern_analysis(
@@ -272,8 +285,7 @@ async def pattern_analysis(
 
             # Available prompt versions
             cur.execute(
-                "SELECT DISTINCT prompt_version FROM corrections "
-                "ORDER BY prompt_version DESC"
+                "SELECT DISTINCT prompt_version FROM corrections ORDER BY prompt_version DESC"
             )
             versions = [r[0] for r in cur.fetchall()]
 
@@ -293,6 +305,7 @@ async def pattern_analysis(
 # ---------------------------------------------------------------------------
 # 4.5 — GET /admin/users
 # ---------------------------------------------------------------------------
+
 
 @router.get("/users")
 async def list_users(user: dict = Depends(require_admin)):
@@ -329,6 +342,7 @@ async def list_users(user: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # 4.6 — POST /admin/users/{id}/credits
 # ---------------------------------------------------------------------------
+
 
 @router.post("/users/{user_id}/credits")
 async def grant_credits(

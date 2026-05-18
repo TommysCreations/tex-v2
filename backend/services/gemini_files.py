@@ -19,6 +19,7 @@ from services.rate_limit import acquire_gemini_slot
 
 class GeminiUploadError(Exception):
     """Raised when a video chunk upload fails."""
+
     pass
 
 
@@ -65,9 +66,7 @@ def _upload_developer_api(local_path: str, mime_type: str) -> dict:
             }
 
         if file_info.state == "FAILED":
-            raise GeminiUploadError(
-                f"Gemini file processing failed for {uploaded_file.name}"
-            )
+            raise GeminiUploadError(f"Gemini file processing failed for {uploaded_file.name}")
 
         time.sleep(10)
 
@@ -111,7 +110,7 @@ def _parse_gs_uri(uri: str) -> tuple[str, str]:
     """Split a gs://bucket/key URI into (bucket, key)."""
     if not uri.startswith("gs://"):
         raise ValueError(f"Not a GCS URI: {uri}")
-    without_scheme = uri[len("gs://"):]
+    without_scheme = uri[len("gs://") :]
     bucket, _, key = without_scheme.partition("/")
     if not bucket or not key:
         raise ValueError(f"Malformed GCS URI: {uri}")

@@ -53,9 +53,7 @@ async def verify_clerk_jwt(token: str) -> dict:
             _jwks_cache["keys"] = None
             jwks_data = await _fetch_jwks()
             for key_data in jwks_data.get("keys", []):
-                public_keys[key_data["kid"]] = jwt.algorithms.RSAAlgorithm.from_jwk(
-                    key_data
-                )
+                public_keys[key_data["kid"]] = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
             if kid not in public_keys:
                 raise HTTPException(status_code=401, detail="Invalid token signing key")
 

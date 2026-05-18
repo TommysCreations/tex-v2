@@ -59,6 +59,7 @@ def get_valid_chunk_uris(film_id: str, conn) -> list[dict]:
             conn.commit()
         finally:
             import os as _os
+
             if _os.path.exists(local_path):
                 _os.remove(local_path)
 

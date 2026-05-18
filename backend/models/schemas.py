@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 # --- Teams ---
 
+
 class TeamCreate(BaseModel):
     name: str
     level: str = "unknown"
@@ -25,6 +26,7 @@ class TeamResponse(BaseModel):
 
 
 # --- Roster Players ---
+
 
 class RosterPlayerCreate(BaseModel):
     team_id: str
@@ -63,6 +65,7 @@ class RosterPlayerResponse(BaseModel):
 
 # --- Films ---
 
+
 class FilmUploadInitiate(BaseModel):
     team_id: str
     file_name: str
@@ -92,6 +95,7 @@ class FilmResponse(BaseModel):
 
 
 # --- Reports ---
+
 
 class ReportCreate(BaseModel):
     team_id: str
@@ -131,6 +135,7 @@ class ReportDetailResponse(ReportResponse):
 
 
 # --- Stripe ---
+
 
 class CheckoutSessionCreate(BaseModel):
     team_id: str

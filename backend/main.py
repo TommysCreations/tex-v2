@@ -31,9 +31,7 @@ REQUIRED_ENV_VARS = [
 def validate_env():
     missing = [var for var in REQUIRED_ENV_VARS if not os.environ.get(var)]
     if missing:
-        raise RuntimeError(
-            f"Missing required environment variables: {', '.join(missing)}"
-        )
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
 
 
 @asynccontextmanager

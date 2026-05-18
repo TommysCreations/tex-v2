@@ -99,9 +99,7 @@ class ClaudeProvider(AIVideoProvider):
 
         text = message.content[0].text if message.content else ""
         if not text.strip():
-            raise RuntimeError(
-                f"Claude returned empty content for section {section_type}"
-            )
+            raise RuntimeError(f"Claude returned empty content for section {section_type}")
 
         logger.info(
             "Claude fallback generated section",

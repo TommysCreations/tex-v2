@@ -4,6 +4,7 @@ import subprocess
 
 class FFmpegError(Exception):
     """Raised when an FFmpeg operation fails."""
+
     pass
 
 
@@ -21,13 +22,20 @@ def compress_film(input_path: str, output_path: str) -> None:
             [
                 "ffmpeg",
                 "-y",
-                "-i", input_path,
-                "-c:v", "libx264",
-                "-crf", "28",
-                "-vf", "scale=-2:720",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
+                "-i",
+                input_path,
+                "-c:v",
+                "libx264",
+                "-crf",
+                "28",
+                "-vf",
+                "scale=-2:720",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
                 output_path,
             ],
             capture_output=True,
@@ -57,12 +65,18 @@ def split_film(input_path: str, output_pattern: str) -> list[str]:
             [
                 "ffmpeg",
                 "-y",
-                "-i", input_path,
-                "-c", "copy",
-                "-map", "0",
-                "-segment_time", "1500",
-                "-f", "segment",
-                "-reset_timestamps", "1",
+                "-i",
+                input_path,
+                "-c",
+                "copy",
+                "-map",
+                "0",
+                "-segment_time",
+                "1500",
+                "-f",
+                "segment",
+                "-reset_timestamps",
+                "1",
                 output_pattern,
             ],
             capture_output=True,

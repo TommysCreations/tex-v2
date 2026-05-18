@@ -83,8 +83,7 @@ async def create_checkout_session(
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE users SET stripe_customer_id = %s, updated_at = now() "
-                    "WHERE id = %s",
+                    "UPDATE users SET stripe_customer_id = %s, updated_at = now() WHERE id = %s",
                     (customer_id, user_id),
                 )
             conn.commit()
@@ -130,8 +129,10 @@ async def create_checkout_session(
             payment_intent_data={"metadata": metadata},
         )
     except stripe_sdk.error.StripeError as e:
-        logger.exception("Stripe checkout session create failed",
-                         extra={"user_id": user_id, "payment_id": payment_id})
+        logger.exception(
+            "Stripe checkout session create failed",
+            extra={"user_id": user_id, "payment_id": payment_id},
+        )
         raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
 
     # Update the payment row with the real session id and amount.
@@ -141,8 +142,7 @@ async def create_checkout_session(
             cur.execute(
                 "UPDATE payments SET stripe_session_id = %s, amount_cents = %s, "
                 "currency = %s, updated_at = now() WHERE id = %s",
-                (session.id, session.amount_total or 0,
-                 (session.currency or "usd"), payment_id),
+                (session.id, session.amount_total or 0, (session.currency or "usd"), payment_id),
             )
         conn.commit()
     finally:
@@ -256,8 +256,7 @@ async def stripe_webhook(request: Request):
 
                     # 4. Link payment row to the report.
                     cur.execute(
-                        "UPDATE payments SET report_id = %s, updated_at = now() "
-                        "WHERE id = %s",
+                        "UPDATE payments SET report_id = %s, updated_at = now() WHERE id = %s",
                         (report_id, payment_id),
                     )
 
@@ -272,6 +271,7 @@ async def stripe_webhook(request: Request):
             # commits above — otherwise a worker could pick up the task before
             # the reports row is visible.
             from tasks.report_generation import generate_report
+
             generate_report.delay(report_id)
             logger.info(
                 "Stripe webhook: generate_report enqueued",
@@ -302,22 +302,22 @@ async def stripe_webhook(request: Request):
                     if cur.rowcount == 0:
                         logger.error(
                             "Stripe webhook: no payment row for failed PI",
-                            extra={"payment_intent_id": payment_intent_id,
-                                   "tex_payment_id": tex_payment_id},
+                            extra={
+                                "payment_intent_id": payment_intent_id,
+                                "tex_payment_id": tex_payment_id,
+                            },
                         )
                 conn.commit()
             finally:
                 conn.close()
 
         else:
-            logger.info("Stripe webhook: unhandled event type",
-                        extra={"event_type": event_type})
+            logger.info("Stripe webhook: unhandled event type", extra={"event_type": event_type})
 
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Stripe webhook handler error",
-                         extra={"event_type": event_type})
+        logger.exception("Stripe webhook handler error", extra={"event_type": event_type})
         raise HTTPException(status_code=500, detail="Internal webhook processing error")
 
     return {"status": "ok"}

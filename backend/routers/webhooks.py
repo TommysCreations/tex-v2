@@ -31,7 +31,10 @@ async def clerk_webhook(request: Request):
         wh = Webhook(os.environ["CLERK_WEBHOOK_SECRET"])
         payload = wh.verify(body, headers)
     except WebhookVerificationError:
-        logger.error("Clerk webhook signature verification failed", extra={"body": body.decode(errors="replace")})
+        logger.error(
+            "Clerk webhook signature verification failed",
+            extra={"body": body.decode(errors="replace")},
+        )
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     event_type = payload.get("type")
@@ -40,20 +43,19 @@ async def clerk_webhook(request: Request):
     try:
         if event_type == "user.created":
             clerk_id = data.get("id")
-            email = (
-                next(
-                    (
-                        e["email_address"]
-                        for e in data.get("email_addresses", [])
-                        if e.get("id") == data.get("primary_email_address_id")
-                    ),
-                    None,
-                )
-                or data.get("email_addresses", [{}])[0].get("email_address", "")
-            )
+            email = next(
+                (
+                    e["email_address"]
+                    for e in data.get("email_addresses", [])
+                    if e.get("id") == data.get("primary_email_address_id")
+                ),
+                None,
+            ) or data.get("email_addresses", [{}])[0].get("email_address", "")
 
             if not clerk_id or not email:
-                logger.error("Clerk user.created missing clerk_id or email", extra={"payload": payload})
+                logger.error(
+                    "Clerk user.created missing clerk_id or email", extra={"payload": payload}
+                )
                 raise HTTPException(status_code=400, detail="Missing clerk_id or email")
 
             conn = get_connection()
@@ -89,7 +91,9 @@ async def clerk_webhook(request: Request):
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Clerk webhook handler error", extra={"event_type": event_type, "payload": payload})
+        logger.exception(
+            "Clerk webhook handler error", extra={"event_type": event_type, "payload": payload}
+        )
         raise HTTPException(status_code=500, detail="Internal webhook processing error")
 
     # Return 200 for all event types (including ones we don't handle)

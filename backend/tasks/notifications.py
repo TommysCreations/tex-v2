@@ -60,8 +60,9 @@ def _write_dead_letter(
     time_limit=30,
     acks_late=True,
 )
-def notify_coach(self, report_id: str = None, film_id: str = None,
-                 notification_type: str = "report_complete"):
+def notify_coach(
+    self, report_id: str = None, film_id: str = None, notification_type: str = "report_complete"
+):
     """Write a notification row for a coach. Phase 2 stub — full implementation in Phase 3."""
     NOTIFICATION_MESSAGES = {
         "report_complete": "Your scouting report is ready. Download it now.",
@@ -94,7 +95,11 @@ def notify_coach(self, report_id: str = None, film_id: str = None,
                     user_id = row[0]
 
             if not user_id:
-                log.warning("notify_coach: could not determine user_id for film_id=%s report_id=%s", film_id, report_id)
+                log.warning(
+                    "notify_coach: could not determine user_id for film_id=%s report_id=%s",
+                    film_id,
+                    report_id,
+                )
                 return
 
             cur.execute(

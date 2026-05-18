@@ -73,10 +73,7 @@ def _build_html(
         if status == "complete" and content:
             body = _text_to_html(content)
             sections_html.append(
-                f'<div class="section">'
-                f"<h2>{html.escape(section_title)}</h2>"
-                f"{body}"
-                f"</div>"
+                f'<div class="section"><h2>{html.escape(section_title)}</h2>{body}</div>'
             )
         else:
             sections_html.append(

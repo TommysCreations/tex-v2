@@ -53,7 +53,10 @@ def delete_from_r2(bucket: str, key: str) -> None:
 
 
 def upload_bytes_to_r2(
-    bucket: str, key: str, data: bytes, content_type: str = "application/octet-stream",
+    bucket: str,
+    key: str,
+    data: bytes,
+    content_type: str = "application/octet-stream",
 ) -> None:
     """Upload raw bytes to R2 without writing to disk."""
     client = get_r2_client()

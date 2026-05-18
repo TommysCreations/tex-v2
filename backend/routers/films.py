@@ -22,17 +22,21 @@ FILM_COLUMNS = (
 
 def _row_to_response(row) -> FilmResponse:
     return FilmResponse(
-        id=str(row[0]), team_id=str(row[1]), file_name=row[2],
-        file_size_bytes=row[3], status=row[4], duration_seconds=row[5],
-        chunk_count=row[6], error_message=row[7],
-        created_at=row[8], updated_at=row[9],
+        id=str(row[0]),
+        team_id=str(row[1]),
+        file_name=row[2],
+        file_size_bytes=row[3],
+        status=row[4],
+        duration_seconds=row[5],
+        chunk_count=row[6],
+        error_message=row[7],
+        created_at=row[8],
+        updated_at=row[9],
     )
 
 
 @router.post("/upload-initiate", response_model=FilmUploadInitiateResponse, status_code=201)
-async def upload_initiate(
-    body: FilmUploadInitiate, user: dict = Depends(get_current_user)
-):
+async def upload_initiate(body: FilmUploadInitiate, user: dict = Depends(get_current_user)):
     user_id = str(user["id"])
 
     # Verify team belongs to user
@@ -82,9 +86,7 @@ async def upload_initiate(
 
 
 @router.post("/upload-complete", response_model=FilmResponse)
-async def upload_complete(
-    body: FilmUploadComplete, user: dict = Depends(get_current_user)
-):
+async def upload_complete(body: FilmUploadComplete, user: dict = Depends(get_current_user)):
     user_id = str(user["id"])
 
     conn = get_connection()
@@ -106,15 +108,14 @@ async def upload_complete(
 
     # Enqueue film processing
     from tasks.film_processing import process_film
+
     process_film.delay(str(row[0]))
 
     return _row_to_response(row)
 
 
 @router.post("/upload-abort", status_code=204)
-async def upload_abort(
-    body: FilmUploadComplete, user: dict = Depends(get_current_user)
-):
+async def upload_abort(body: FilmUploadComplete, user: dict = Depends(get_current_user)):
     user_id = str(user["id"])
 
     conn = get_connection()
@@ -172,6 +173,7 @@ async def retry_film(film_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Film not found or not in error state")
 
     from tasks.film_processing import process_film
+
     process_film.delay(str(row[0]))
 
     return _row_to_response(row)

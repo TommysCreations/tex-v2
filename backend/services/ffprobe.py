@@ -4,6 +4,7 @@ import subprocess
 
 class FilmValidationError(Exception):
     """Raised when FFprobe validation fails with a coach-facing message."""
+
     pass
 
 
@@ -17,8 +18,10 @@ def get_duration(local_path: str) -> float:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 local_path,
             ],
@@ -50,8 +53,10 @@ def validate_film_file(local_path: str) -> dict:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 local_path,
@@ -73,9 +78,7 @@ def validate_film_file(local_path: str) -> dict:
     try:
         probe_data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        raise FilmValidationError(
-            "Could not read video metadata. The file may be corrupted."
-        )
+        raise FilmValidationError("Could not read video metadata. The file may be corrupted.")
 
     # Check for video stream
     streams = probe_data.get("streams", [])
@@ -99,9 +102,7 @@ def validate_film_file(local_path: str) -> dict:
     try:
         duration = float(duration_str)
     except (ValueError, TypeError):
-        raise FilmValidationError(
-            "Could not determine video duration. The file may be corrupted."
-        )
+        raise FilmValidationError("Could not determine video duration. The file may be corrupted.")
 
     if duration < 60:
         raise FilmValidationError(
