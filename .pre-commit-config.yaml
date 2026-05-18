@@ -1,10 +1,9 @@
 # Pre-commit hooks for TEX v2.
 #
-# PR 1 ships gitleaks (local secret prevention) plus a small set of standard
-# hygiene hooks (whitespace, EOL, merge-conflict markers, large files). Lint
-# and format hooks — ruff, prettier, eslint, mypy — land in PR 4 alongside
-# the linter configs they enforce, because those must match what CI runs and
-# the CI workflows ship in PR 3.
+# PR 1 shipped gitleaks + hygiene hooks. PR 4 (D-021) added ruff, mypy,
+# eslint, and prettier — keeping local hooks aligned with the CI gates in
+# .github/workflows/{backend,frontend}.yml. Local and CI must run the same
+# tool versions; bump in lockstep.
 #
 # Install once after clone:
 #   pip install pre-commit
@@ -14,9 +13,9 @@
 # full repo on demand:
 #   pre-commit run --all-files
 #
-# CI runs gitleaks separately as a workflow gate (added in PR 3). The local
-# hook is the fast first line; the CI run is the safety net for PRs that
-# skip the hook or are opened from environments without pre-commit installed.
+# CI runs all of these as workflow gates as well (PR 3 + PR 4). The local
+# hook is the fast first line; the CI run is the safety net for PRs opened
+# from environments without pre-commit installed.
 
 repos:
   - repo: https://github.com/gitleaks/gitleaks
@@ -37,3 +36,40 @@ repos:
         # blocks accidents (a stray image, a .pyc, a checked-in .mp4 chunk)
         # without forcing per-file overrides on existing content.
         args: ["--maxkb=500"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        files: ^backend/
+        # Mypy is permissive at PR-4 baseline (strict=false in
+        # backend/pyproject.toml). Add type-stub deps here as mypy surfaces them
+        # (e.g., types-requests).
+        additional_dependencies: []
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint
+        # `language: system` + npx so the version comes from frontend/node_modules
+        # (locked by package-lock.json), not a stale pre-commit mirror.
+        entry: bash -c 'cd frontend && npx eslint'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
+
+      - id: prettier
+        name: prettier
+        entry: bash -c 'cd frontend && npx prettier --check'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx|json|md|css)$
+        pass_filenames: false

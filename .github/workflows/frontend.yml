@@ -1,9 +1,12 @@
 # Frontend CI — runs on PRs that touch frontend/ or this workflow.
 #
-# Scope in PR 3: install deps (npm ci against package-lock.json), TypeScript
-# typecheck (no `any` per CLAUDE.md rules), production Next.js build (catches
-# missing imports, broken JSX, env-var typos at build time). ESLint lands in
-# PR 4 alongside eslint.config.mjs and the matching pre-commit hook.
+# Scope (PR 4 baseline): npm ci, eslint (flat config, ESLint 9), prettier
+# --check, tsc --noEmit (strict), next build.
+#
+# Tool versions are locked in frontend/package.json + package-lock.json
+# (eslint, typescript-eslint, eslint-config-next, prettier). The eslint
+# config lives at frontend/eslint.config.mjs and matches the local
+# pre-commit hook in .pre-commit-config.yaml. Bump in lockstep.
 #
 # All third-party actions pinned to major versions; Dependabot proposes
 # weekly bumps in the github-actions ecosystem.
@@ -42,11 +45,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier check
+        run: npm run format:check
+
       - name: TypeScript typecheck
         run: npx tsc --noEmit
 
       - name: Next.js production build
-        # `next build` runs the type-checker and bundler. Treated as a gate
-        # because a green build is the minimum-viable correctness signal for
-        # a Next.js app before PR 4 adds explicit eslint.
         run: npm run build
