@@ -7,7 +7,6 @@ Per CLAUDE.md:
 """
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -31,11 +30,11 @@ class CorrectionCreate(BaseModel):
     section_type: str
     ai_claim: str
     is_correct: bool
-    correct_claim: Optional[str] = None
+    correct_claim: str | None = None
     category: str
     confidence: str = "high"
     prompt_version: str
-    admin_notes: Optional[str] = None
+    admin_notes: str | None = None
 
 
 class CreditGrant(BaseModel):
@@ -49,10 +48,10 @@ class CreditGrant(BaseModel):
 
 @router.get("/corrections")
 async def list_corrections(
-    section_type: Optional[str] = Query(None),
-    prompt_version: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    is_correct: Optional[bool] = Query(None),
+    section_type: str | None = Query(None),
+    prompt_version: str | None = Query(None),
+    category: str | None = Query(None),
+    is_correct: bool | None = Query(None),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
     user: dict = Depends(require_admin),
@@ -214,7 +213,7 @@ async def create_correction(
 
 @router.get("/pattern-analysis")
 async def pattern_analysis(
-    prompt_version: Optional[str] = Query(None),
+    prompt_version: str | None = Query(None),
     user: dict = Depends(require_admin),
 ):
     """Error rate by category and section type for a given prompt version.

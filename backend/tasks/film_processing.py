@@ -7,7 +7,6 @@ import traceback
 from celery import group
 from celery.exceptions import SoftTimeLimitExceeded
 
-from tasks.celery_app import celery_app
 from services.ai.router import get_ai_provider
 from services.db import get_connection
 from services.ffmpeg import FFmpegError, compress_film, split_film
@@ -18,6 +17,7 @@ from services.prompts import load_prompt
 from services.r2 import download_from_r2, upload_to_r2
 from services.rate_limit import acquire_gemini_slot
 from services.roster_format import format_roster_for_prompt
+from tasks.celery_app import celery_app
 
 log = logging.getLogger(__name__)
 

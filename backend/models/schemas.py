@@ -1,8 +1,6 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
-
 
 # --- Teams ---
 
@@ -13,8 +11,8 @@ class TeamCreate(BaseModel):
 
 
 class TeamUpdate(BaseModel):
-    name: Optional[str] = None
-    level: Optional[str] = None
+    name: str | None = None
+    level: str | None = None
 
 
 class TeamResponse(BaseModel):
@@ -32,21 +30,21 @@ class RosterPlayerCreate(BaseModel):
     team_id: str
     jersey_number: str
     full_name: str
-    position: Optional[str] = None
-    height: Optional[str] = None
-    dominant_hand: Optional[str] = None
-    role: Optional[str] = None
-    notes: Optional[str] = None
+    position: str | None = None
+    height: str | None = None
+    dominant_hand: str | None = None
+    role: str | None = None
+    notes: str | None = None
 
 
 class RosterPlayerUpdate(BaseModel):
-    jersey_number: Optional[str] = None
-    full_name: Optional[str] = None
-    position: Optional[str] = None
-    height: Optional[str] = None
-    dominant_hand: Optional[str] = None
-    role: Optional[str] = None
-    notes: Optional[str] = None
+    jersey_number: str | None = None
+    full_name: str | None = None
+    position: str | None = None
+    height: str | None = None
+    dominant_hand: str | None = None
+    role: str | None = None
+    notes: str | None = None
 
 
 class RosterPlayerResponse(BaseModel):
@@ -54,11 +52,11 @@ class RosterPlayerResponse(BaseModel):
     team_id: str
     jersey_number: str
     full_name: str
-    position: Optional[str]
-    height: Optional[str]
-    dominant_hand: Optional[str]
-    role: Optional[str]
-    notes: Optional[str]
+    position: str | None
+    height: str | None
+    dominant_hand: str | None
+    role: str | None
+    notes: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -87,9 +85,9 @@ class FilmResponse(BaseModel):
     file_name: str
     file_size_bytes: int
     status: str
-    duration_seconds: Optional[int]
-    chunk_count: Optional[int]
-    error_message: Optional[str]
+    duration_seconds: int | None
+    chunk_count: int | None
+    error_message: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -103,7 +101,7 @@ class ReportCreate(BaseModel):
 
 
 class ReportCreateResponse(BaseModel):
-    report_id: Optional[str] = None
+    report_id: str | None = None
     payment_required: bool = False
 
 
@@ -111,11 +109,11 @@ class ReportResponse(BaseModel):
     id: str
     team_id: str
     status: str
-    title: Optional[str]
+    title: str | None
     prompt_version: str
-    error_message: Optional[str]
-    generation_time_seconds: Optional[int]
-    completed_at: Optional[datetime]
+    error_message: str | None
+    generation_time_seconds: int | None
+    completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -125,13 +123,13 @@ class SectionStatus(BaseModel):
 
     section_type: str
     status: str
-    model_used: Optional[str] = None
-    generation_time_seconds: Optional[int] = None
+    model_used: str | None = None
+    generation_time_seconds: int | None = None
 
 
 class ReportDetailResponse(ReportResponse):
     sections: list[SectionStatus] = []
-    pdf_url: Optional[str] = None
+    pdf_url: str | None = None
 
 
 # --- Stripe ---

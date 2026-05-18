@@ -2,8 +2,8 @@ import json
 import logging
 import traceback
 
-from tasks.celery_app import celery_app
 from services.db import get_connection
+from tasks.celery_app import celery_app
 
 log = logging.getLogger(__name__)
 

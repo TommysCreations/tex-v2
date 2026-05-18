@@ -12,7 +12,7 @@ uri_expiry checks treat the URI as permanently valid.
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from services.rate_limit import acquire_gemini_slot
 
@@ -24,7 +24,7 @@ class GeminiUploadError(Exception):
 
 
 # Far-future sentinel for GCS URIs — they do not expire.
-GCS_NEVER_EXPIRES = datetime(9999, 12, 31, tzinfo=timezone.utc)
+GCS_NEVER_EXPIRES = datetime(9999, 12, 31, tzinfo=UTC)
 
 
 def _backend() -> str:
@@ -183,6 +183,6 @@ def _parse_expiry(file_info) -> datetime:
         exp = file_info.expiration_time
         if isinstance(exp, datetime):
             if exp.tzinfo is None:
-                return exp.replace(tzinfo=timezone.utc)
+                return exp.replace(tzinfo=UTC)
             return exp
-    return datetime.now(timezone.utc) + timedelta(hours=47)
+    return datetime.now(UTC) + timedelta(hours=47)

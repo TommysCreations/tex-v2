@@ -15,7 +15,6 @@ Per SCHEMA.md and CLAUDE.md PAYMENT RULES:
 
 from services.db import get_connection
 
-
 FREE = "free"
 CREDIT = "credit"
 STRIPE_REQUIRED = "stripe_required"

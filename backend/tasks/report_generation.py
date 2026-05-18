@@ -21,17 +21,17 @@ import logging
 import os
 import time
 import traceback
-from datetime import date, timezone
+from datetime import UTC, date
 
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
 
 from services.ai.router import get_ai_provider, get_fallback_provider
 from services.db import get_connection
-from services.pdf import assemble_pdf
-from services.prompts import load_prompt
-from services.prompt_versions import get_film_analysis_cache_prompt_version
 from services.gemini_files import delete_gemini_file
+from services.pdf import assemble_pdf
+from services.prompt_versions import get_film_analysis_cache_prompt_version
+from services.prompts import load_prompt
 from services.r2 import delete_from_r2, upload_bytes_to_r2
 from services.rate_limit import acquire_gemini_slot
 from services.roster_format import format_roster_for_prompt
@@ -1081,11 +1081,10 @@ def assemble_and_deliver(self, report_id: str):
         if created_at:
             from datetime import datetime
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if created_at.tzinfo is None:
-                from datetime import timezone as tz
 
-                created_at = created_at.replace(tzinfo=tz.utc)
+                created_at = created_at.replace(tzinfo=UTC)
             generation_seconds = int((now - created_at).total_seconds())
 
         conn = get_connection()
