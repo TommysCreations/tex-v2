@@ -219,4 +219,4 @@ def run_section(self, report_id: str, section_type: str, cache_uri: str, prompt_
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries))
+        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries)) from exc

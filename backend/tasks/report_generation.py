@@ -432,7 +432,7 @@ def generate_report(self, report_id: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries))
+        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +853,7 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries))
+        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries)) from exc
 
     finally:
         # Always delete the cache — success or failure.
@@ -1156,4 +1156,4 @@ def assemble_and_deliver(self, report_id: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries))
+        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries)) from exc

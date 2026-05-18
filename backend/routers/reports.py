@@ -120,7 +120,7 @@ async def create_report(body: ReportCreate, user: dict = Depends(get_current_use
     except ValueError as exc:
         # consume_entitlement raises ValueError on race (credits exhausted).
         conn.rollback()
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     finally:
         conn.close()
 

@@ -50,14 +50,14 @@ def _upload_developer_api(local_path: str, mime_type: str) -> dict:
             config={"mime_type": mime_type},
         )
     except Exception as e:
-        raise GeminiUploadError(f"Gemini file upload failed: {e}")
+        raise GeminiUploadError(f"Gemini file upload failed: {e}") from e
 
     max_polls = 30
     for _ in range(max_polls):
         try:
             file_info = client.files.get(name=uploaded_file.name)
         except Exception as e:
-            raise GeminiUploadError(f"Failed to check Gemini file status: {e}")
+            raise GeminiUploadError(f"Failed to check Gemini file status: {e}") from e
 
         if file_info.state == "ACTIVE":
             return {
@@ -135,7 +135,7 @@ def _upload_vertex_gcs(local_path: str, mime_type: str) -> dict:
         blob = bucket.blob(key)
         blob.upload_from_filename(local_path, content_type=mime_type)
     except Exception as e:
-        raise GeminiUploadError(f"GCS upload failed: {e}")
+        raise GeminiUploadError(f"GCS upload failed: {e}") from e
 
     return {
         "uri": f"gs://{bucket_name}/{key}",

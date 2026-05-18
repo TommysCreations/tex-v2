@@ -129,6 +129,6 @@ def notify_coach(
                 film_id=film_id,
             )
             raise
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
     finally:
         conn.close()

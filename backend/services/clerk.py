@@ -63,12 +63,12 @@ async def verify_clerk_jwt(token: str) -> dict:
             algorithms=["RS256"],
         )
         return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.ExpiredSignatureError as err:
+        raise HTTPException(status_code=401, detail="Token expired") from err
     except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=503, detail="Auth service unavailable")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
+    except httpx.HTTPError as err:
+        raise HTTPException(status_code=503, detail="Auth service unavailable") from err
 
 
 async def get_current_user(request: Request) -> dict:

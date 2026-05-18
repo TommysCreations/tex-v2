@@ -76,7 +76,9 @@ async def create_checkout_session(
             )
         except stripe_sdk.error.StripeError as e:
             logger.exception("Stripe customer create failed", extra={"user_id": user_id})
-            raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
+            raise HTTPException(
+                status_code=502, detail=f"Stripe error: {e.user_message or str(e)}"
+            ) from e
 
         customer_id = customer.id
         conn = get_connection()
@@ -133,7 +135,9 @@ async def create_checkout_session(
             "Stripe checkout session create failed",
             extra={"user_id": user_id, "payment_id": payment_id},
         )
-        raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
+        raise HTTPException(
+            status_code=502, detail=f"Stripe error: {e.user_message or str(e)}"
+        ) from e
 
     # Update the payment row with the real session id and amount.
     conn = get_connection()
@@ -170,12 +174,12 @@ async def stripe_webhook(request: Request):
 
     try:
         event = verify_webhook(body, signature)
-    except stripe_sdk.error.SignatureVerificationError:
+    except stripe_sdk.error.SignatureVerificationError as err:
         logger.error("Stripe webhook signature verification failed")
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature") from err
+    except ValueError as err:
         logger.error("Stripe webhook payload parse failed")
-        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from err
 
     event_type = event["type"]
     data = event["data"]["object"]
@@ -316,8 +320,8 @@ async def stripe_webhook(request: Request):
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as err:
         logger.exception("Stripe webhook handler error", extra={"event_type": event_type})
-        raise HTTPException(status_code=500, detail="Internal webhook processing error")
+        raise HTTPException(status_code=500, detail="Internal webhook processing error") from err
 
     return {"status": "ok"}

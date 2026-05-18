@@ -30,12 +30,12 @@ async def clerk_webhook(request: Request):
     try:
         wh = Webhook(os.environ["CLERK_WEBHOOK_SECRET"])
         payload = wh.verify(body, headers)
-    except WebhookVerificationError:
+    except WebhookVerificationError as err:
         logger.error(
             "Clerk webhook signature verification failed",
             extra={"body": body.decode(errors="replace")},
         )
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature") from err
 
     event_type = payload.get("type")
     data = payload.get("data", {})
@@ -90,11 +90,11 @@ async def clerk_webhook(request: Request):
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as err:
         logger.exception(
             "Clerk webhook handler error", extra={"event_type": event_type, "payload": payload}
         )
-        raise HTTPException(status_code=500, detail="Internal webhook processing error")
+        raise HTTPException(status_code=500, detail="Internal webhook processing error") from err
 
     # Return 200 for all event types (including ones we don't handle)
     # so Clerk does not retry them.

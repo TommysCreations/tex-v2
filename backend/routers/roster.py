@@ -61,12 +61,12 @@ async def create_player(body: RosterPlayerCreate, user: dict = Depends(get_curre
                         body.notes,
                     ),
                 )
-            except UniqueViolation:
+            except UniqueViolation as err:
                 conn.rollback()
                 raise HTTPException(
                     status_code=409,
                     detail=f"Jersey number {body.jersey_number} already exists on this team",
-                )
+                ) from err
             row = cur.fetchone()
         conn.commit()
     finally:
@@ -149,12 +149,12 @@ async def update_player(
                     f"RETURNING {PLAYER_COLUMNS}",
                     values,
                 )
-            except UniqueViolation:
+            except UniqueViolation as err:
                 conn.rollback()
                 raise HTTPException(
                     status_code=409,
                     detail="Jersey number already exists on this team",
-                )
+                ) from err
             row = cur.fetchone()
         conn.commit()
     finally:

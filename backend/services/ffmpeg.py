@@ -42,10 +42,10 @@ def compress_film(input_path: str, output_path: str) -> None:
             text=True,
             timeout=3600,
         )
-    except subprocess.TimeoutExpired:
-        raise FFmpegError("Film compression timed out after 60 minutes.")
-    except FileNotFoundError:
-        raise FFmpegError("FFmpeg is not installed on this worker.")
+    except subprocess.TimeoutExpired as err:
+        raise FFmpegError("Film compression timed out after 60 minutes.") from err
+    except FileNotFoundError as err:
+        raise FFmpegError("FFmpeg is not installed on this worker.") from err
 
     if result.returncode != 0:
         raise FFmpegError(f"Film compression failed: {result.stderr[:500]}")
@@ -83,10 +83,10 @@ def split_film(input_path: str, output_pattern: str) -> list[str]:
             text=True,
             timeout=1800,
         )
-    except subprocess.TimeoutExpired:
-        raise FFmpegError("Film splitting timed out after 30 minutes.")
-    except FileNotFoundError:
-        raise FFmpegError("FFmpeg is not installed on this worker.")
+    except subprocess.TimeoutExpired as err:
+        raise FFmpegError("Film splitting timed out after 30 minutes.") from err
+    except FileNotFoundError as err:
+        raise FFmpegError("FFmpeg is not installed on this worker.") from err
 
     if result.returncode != 0:
         raise FFmpegError(f"Film splitting failed: {result.stderr[:500]}")

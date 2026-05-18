@@ -36,7 +36,7 @@ def _load_preprocess_prompt(section_type: str) -> tuple[str, str]:
         raise NotImplementedError(
             f"Prompt file for '{section_type}' is not written yet. "
             f"See ROADMAP.md ACTIVE BLOCKERS. Underlying: {e}"
-        )
+        ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +487,7 @@ def process_film(self, film_id: str):
             from tasks.notifications import notify_coach
 
             notify_coach.delay(film_id=film_id, notification_type="film_error")
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     finally:
         _cleanup_tmp(tmp_files)
@@ -723,7 +723,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 film_id,
                 f"Chunk {chunk_index} failed to upload to Gemini: {exc}",
             )
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     except Exception as exc:
         if self.request.retries >= self.max_retries:
@@ -752,7 +752,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 film_id,
                 f"Chunk {chunk_index} failed: {exc}",
             )
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     finally:
         _cleanup_tmp(tmp_files)
@@ -913,4 +913,4 @@ def run_chunk_synthesis(self, film_id: str):
                 film_id=film_id,
             )
             _update_film_status(film_id, "error", f"Synthesis failed: {exc}")
-        raise self.retry(exc=exc, countdown=60)
+        raise self.retry(exc=exc, countdown=60) from exc
