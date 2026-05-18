@@ -51,10 +51,15 @@ repos:
     hooks:
       - id: mypy
         files: ^backend/
-        # Mypy is permissive at PR-4 baseline (strict=false in
-        # backend/pyproject.toml). Add type-stub deps here as mypy surfaces them
-        # (e.g., types-requests).
-        additional_dependencies: []
+        # Install the full backend runtime stack so mypy sees the real
+        # stripe/jwt/anthropic/etc. types instead of falling back to
+        # ignore_missing_imports. Cost: first pre-commit run is slow
+        # (~30-60s while pre-commit builds its venv), subsequent runs
+        # reuse the cached venv. Without this, local mypy is laxer than
+        # the CI mypy run and contributors see "passes locally, fails CI."
+        additional_dependencies:
+          - "-r"
+          - "backend/requirements.txt"
 
   - repo: local
     hooks:
