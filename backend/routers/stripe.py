@@ -2,15 +2,16 @@ import json
 import logging
 import os
 
-import stripe as stripe_sdk
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
+from stripe import SignatureVerificationError, StripeError
 
 from models.schemas import CheckoutSessionCreate, CheckoutSessionResponse
 from services.clerk import get_current_user
 from services.db import get_connection
 from services.payment_gate import STRIPE_REQUIRED, consume_entitlement
 from services.prompts import load_prompt
-from services.stripe_client import get_stripe, verify_webhook
+from services.stripe_client import configure_stripe, verify_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ async def create_checkout_session(
     finally:
         conn.close()
 
-    stripe = get_stripe()
+    configure_stripe()
 
     # Create Stripe customer if the user doesn't have one yet.
     # Customer creation is not strictly required for one-off Checkout in payment
@@ -74,7 +75,7 @@ async def create_checkout_session(
                 email=user["email"],
                 metadata={"tex_user_id": user_id},
             )
-        except stripe_sdk.error.StripeError as e:
+        except StripeError as e:
             logger.exception("Stripe customer create failed", extra={"user_id": user_id})
             raise HTTPException(
                 status_code=502, detail=f"Stripe error: {e.user_message or str(e)}"
@@ -130,7 +131,7 @@ async def create_checkout_session(
             metadata=metadata,
             payment_intent_data={"metadata": metadata},
         )
-    except stripe_sdk.error.StripeError as e:
+    except StripeError as e:
         logger.exception(
             "Stripe checkout session create failed",
             extra={"user_id": user_id, "payment_id": payment_id},
@@ -152,6 +153,7 @@ async def create_checkout_session(
     finally:
         conn.close()
 
+    assert session.url is not None, "Stripe returned no checkout URL for payment-mode session"
     return CheckoutSessionResponse(checkout_url=session.url, payment_id=payment_id)
 
 
@@ -174,7 +176,7 @@ async def stripe_webhook(request: Request):
 
     try:
         event = verify_webhook(body, signature)
-    except stripe_sdk.error.SignatureVerificationError as err:
+    except SignatureVerificationError as err:
         logger.error("Stripe webhook signature verification failed")
         raise HTTPException(status_code=400, detail="Invalid webhook signature") from err
     except ValueError as err:
