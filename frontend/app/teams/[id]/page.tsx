@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useAuth } from '@clerk/nextjs';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import {
   Film,
   Report,
@@ -21,27 +21,23 @@ import {
   retryFilm,
   updatePlayer,
   updateTeam,
-} from "@/lib/api";
+} from '@/lib/api';
 
-type Tab = "roster" | "films" | "reports";
+type Tab = 'roster' | 'films' | 'reports';
 
 function FilmStatusBadge({ status }: { status: string }) {
   switch (status) {
-    case "uploaded":
+    case 'uploaded':
       return (
         <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
           Uploaded
         </span>
       );
-    case "processing":
-    case "chunks_uploaded":
+    case 'processing':
+    case 'chunks_uploaded':
       return (
         <span className="flex items-center gap-1 rounded-full bg-orange-900/60 px-2 py-0.5 text-xs font-medium text-orange-300">
-          <svg
-            className="h-3 w-3 animate-spin"
-            viewBox="0 0 24 24"
-            fill="none"
-          >
+          <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
             <circle
               className="opacity-25"
               cx="12"
@@ -59,13 +55,13 @@ function FilmStatusBadge({ status }: { status: string }) {
           Processing
         </span>
       );
-    case "processed":
+    case 'processed':
       return (
         <span className="rounded-full bg-green-900 px-2 py-0.5 text-xs font-medium text-green-300">
           Ready
         </span>
       );
-    case "error":
+    case 'error':
       return (
         <span className="rounded-full bg-red-900 px-2 py-0.5 text-xs font-medium text-red-300">
           Error
@@ -89,21 +85,21 @@ export default function TeamPage() {
   const [roster, setRoster] = useState<RosterPlayer[]>([]);
   const [films, setFilms] = useState<Film[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
-  const [tab, setTab] = useState<Tab>("roster");
+  const [tab, setTab] = useState<Tab>('roster');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
 
   // Edit team state
   const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editLevel, setEditLevel] = useState("");
+  const [editName, setEditName] = useState('');
+  const [editLevel, setEditLevel] = useState('');
 
   // Add player state
   const [adding, setAdding] = useState(false);
-  const [newJersey, setNewJersey] = useState("");
-  const [newFullName, setNewFullName] = useState("");
-  const [newPosition, setNewPosition] = useState("");
+  const [newJersey, setNewJersey] = useState('');
+  const [newFullName, setNewFullName] = useState('');
+  const [newPosition, setNewPosition] = useState('');
 
   async function loadData() {
     try {
@@ -123,7 +119,7 @@ export default function TeamPage() {
       setEditLevel(t.level);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load team");
+      setError(e instanceof Error ? e.message : 'Failed to load team');
     } finally {
       setLoading(false);
     }
@@ -135,23 +131,19 @@ export default function TeamPage() {
 
   // Poll films that are still processing (every 10 seconds)
   useEffect(() => {
-    const processingFilms = films.filter(
-      (f) => !["processed", "error"].includes(f.status)
-    );
+    const processingFilms = films.filter((f) => !['processed', 'error'].includes(f.status));
     if (processingFilms.length === 0) return;
 
     const interval = setInterval(async () => {
       const token = await getToken();
       if (!token) return;
       try {
-        const updated = await Promise.all(
-          processingFilms.map((f) => getFilm(token, f.id))
-        );
+        const updated = await Promise.all(processingFilms.map((f) => getFilm(token, f.id)));
         setFilms((prev) =>
           prev.map((f) => {
             const u = updated.find((uf) => uf.id === f.id);
             return u ?? f;
-          })
+          }),
         );
       } catch {
         // Polling failure is not critical — will retry on next interval
@@ -169,7 +161,7 @@ export default function TeamPage() {
       setFilms((prev) => prev.map((f) => (f.id === filmId ? updated : f)));
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to retry film");
+      setError(e instanceof Error ? e.message : 'Failed to retry film');
     }
   }
 
@@ -185,7 +177,7 @@ export default function TeamPage() {
       setEditing(false);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to update team");
+      setError(e instanceof Error ? e.message : 'Failed to update team');
     }
   }
 
@@ -195,9 +187,9 @@ export default function TeamPage() {
     if (!token || !team) return;
     try {
       await deleteTeam(token, team.id);
-      router.push("/dashboard");
+      router.push('/dashboard');
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete team");
+      setError(e instanceof Error ? e.message : 'Failed to delete team');
     }
   }
 
@@ -214,19 +206,19 @@ export default function TeamPage() {
         position: newPosition || undefined,
       });
       setAdding(false);
-      setNewJersey("");
-      setNewFullName("");
-      setNewPosition("");
+      setNewJersey('');
+      setNewFullName('');
+      setNewPosition('');
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to add player");
+      setError(e instanceof Error ? e.message : 'Failed to add player');
     }
   }
 
   async function handleGenerateReport() {
     const token = await getToken();
     if (!token) return;
-    const processedFilms = films.filter((f) => f.status === "processed");
+    const processedFilms = films.filter((f) => f.status === 'processed');
     if (processedFilms.length === 0) return;
     setGenerating(true);
     try {
@@ -247,22 +239,21 @@ export default function TeamPage() {
         router.push(`/reports/${result.report_id}`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to generate report");
+      setError(e instanceof Error ? e.message : 'Failed to generate report');
     } finally {
       setGenerating(false);
     }
   }
 
   async function handleDeletePlayer(player: RosterPlayer) {
-    if (!confirm(`Remove #${player.jersey_number} ${player.full_name}?`))
-      return;
+    if (!confirm(`Remove #${player.jersey_number} ${player.full_name}?`)) return;
     const token = await getToken();
     if (!token) return;
     try {
       await deletePlayer(token, player.id);
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to remove player");
+      setError(e instanceof Error ? e.message : 'Failed to remove player');
     }
   }
 
@@ -285,7 +276,7 @@ export default function TeamPage() {
     );
   }
 
-  const LEVELS = ["d1", "d2", "d3", "eybl", "aau", "high_school", "unknown"];
+  const LEVELS = ['d1', 'd2', 'd3', 'eybl', 'aau', 'high_school', 'unknown'];
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10">
@@ -299,7 +290,7 @@ export default function TeamPage() {
                 onChange={(e) => setEditName(e.target.value)}
                 className="rounded border border-border bg-background px-3 py-1 text-xl font-bold text-white focus:border-brand focus:outline-none"
                 autoFocus
-                onKeyDown={(e) => e.key === "Enter" && handleSaveTeam()}
+                onKeyDown={(e) => e.key === 'Enter' && handleSaveTeam()}
               />
               <select
                 value={editLevel}
@@ -318,19 +309,14 @@ export default function TeamPage() {
               >
                 Save
               </button>
-              <button
-                onClick={() => setEditing(false)}
-                className="text-sm text-gray-400"
-              >
+              <button onClick={() => setEditing(false)} className="text-sm text-gray-400">
                 Cancel
               </button>
             </div>
           ) : (
             <div>
               <h1 className="text-2xl font-bold text-white">{team.name}</h1>
-              <p className="text-sm text-gray-400">
-                {team.level.toUpperCase()}
-              </p>
+              <p className="text-sm text-gray-400">{team.level.toUpperCase()}</p>
             </div>
           )}
         </div>
@@ -358,22 +344,16 @@ export default function TeamPage() {
         </div>
       </div>
 
-      {error && (
-        <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">
-          {error}
-        </p>
-      )}
+      {error && <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">{error}</p>}
 
       {/* Tabs */}
       <div className="mt-8 flex gap-6 border-b border-border">
-        {(["roster", "films", "reports"] as Tab[]).map((t) => (
+        {(['roster', 'films', 'reports'] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`pb-2 text-sm font-medium capitalize ${
-              tab === t
-                ? "border-b-2 border-brand text-brand"
-                : "text-gray-400 hover:text-white"
+              tab === t ? 'border-b-2 border-brand text-brand' : 'text-gray-400 hover:text-white'
             }`}
           >
             {t}
@@ -383,7 +363,7 @@ export default function TeamPage() {
 
       {/* Tab content */}
       <div className="mt-6">
-        {tab === "roster" && (
+        {tab === 'roster' && (
           <div>
             {roster.length > 0 ? (
               <table className="w-full text-left text-sm">
@@ -400,19 +380,11 @@ export default function TeamPage() {
                 <tbody>
                   {roster.map((p) => (
                     <tr key={p.id} className="border-b border-border/50">
-                      <td className="py-2 pr-4 text-white">
-                        {p.jersey_number}
-                      </td>
+                      <td className="py-2 pr-4 text-white">{p.jersey_number}</td>
                       <td className="py-2 pr-4 text-white">{p.full_name}</td>
-                      <td className="py-2 pr-4 text-gray-300">
-                        {p.position || "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-gray-300">
-                        {p.height || "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-gray-300">
-                        {p.role || "—"}
-                      </td>
+                      <td className="py-2 pr-4 text-gray-300">{p.position || '—'}</td>
+                      <td className="py-2 pr-4 text-gray-300">{p.height || '—'}</td>
+                      <td className="py-2 pr-4 text-gray-300">{p.role || '—'}</td>
                       <td className="py-2">
                         <button
                           onClick={() => handleDeletePlayer(p)}
@@ -427,16 +399,12 @@ export default function TeamPage() {
               </table>
             ) : (
               <p className="text-gray-400">
-                No players yet. Add your roster so TEX can identify players in
-                the film.
+                No players yet. Add your roster so TEX can identify players in the film.
               </p>
             )}
 
             {adding ? (
-              <form
-                onSubmit={handleAddPlayer}
-                className="mt-4 flex items-end gap-3"
-              >
+              <form onSubmit={handleAddPlayer} className="mt-4 flex items-end gap-3">
                 <div>
                   <label className="block text-xs text-gray-400">#</label>
                   <input
@@ -457,9 +425,7 @@ export default function TeamPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-400">
-                    Position
-                  </label>
+                  <label className="block text-xs text-gray-400">Position</label>
                   <input
                     value={newPosition}
                     onChange={(e) => setNewPosition(e.target.value)}
@@ -492,7 +458,7 @@ export default function TeamPage() {
           </div>
         )}
 
-        {tab === "films" && (
+        {tab === 'films' && (
           <div>
             {films.length > 0 ? (
               <div className="space-y-2">
@@ -502,22 +468,18 @@ export default function TeamPage() {
                     className="flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3"
                   >
                     <div>
-                      <p className="text-sm font-medium text-white">
-                        {film.file_name}
-                      </p>
+                      <p className="text-sm font-medium text-white">{film.file_name}</p>
                       <p className="text-xs text-gray-400">
                         {(film.file_size_bytes / 1_000_000).toFixed(0)} MB
                         {film.duration_seconds &&
                           ` · ${Math.round(film.duration_seconds / 60)} min`}
                       </p>
-                      {film.status === "error" && film.error_message && (
-                        <p className="mt-1 text-xs text-red-400">
-                          {film.error_message}
-                        </p>
+                      {film.status === 'error' && film.error_message && (
+                        <p className="mt-1 text-xs text-red-400">{film.error_message}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {film.status === "error" && (
+                      {film.status === 'error' && (
                         <button
                           onClick={() => handleRetryFilm(film.id)}
                           className="rounded border border-red-800 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30"
@@ -531,9 +493,7 @@ export default function TeamPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-400">
-                No films uploaded yet for this team.
-              </p>
+              <p className="text-gray-400">No films uploaded yet for this team.</p>
             )}
             <a
               href={`/upload?team_id=${id}`}
@@ -544,7 +504,7 @@ export default function TeamPage() {
           </div>
         )}
 
-        {tab === "reports" && (
+        {tab === 'reports' && (
           <div>
             {reports.length > 0 && (
               <div className="space-y-2">
@@ -556,53 +516,46 @@ export default function TeamPage() {
                   >
                     <div>
                       <p className="text-sm font-medium text-white">
-                        {rep.title || "Scouting Report"}
+                        {rep.title || 'Scouting Report'}
                       </p>
                       <p className="text-xs text-gray-400">
                         {new Date(rep.created_at).toLocaleDateString()}
-                        {rep.generation_time_seconds != null &&
-                          rep.status !== "processing" && (
-                            <span>
-                              {" "}
-                              &middot;{" "}
-                              {Math.round(rep.generation_time_seconds / 60)}{" "}
-                              min
-                            </span>
-                          )}
+                        {rep.generation_time_seconds != null && rep.status !== 'processing' && (
+                          <span> &middot; {Math.round(rep.generation_time_seconds / 60)} min</span>
+                        )}
                       </p>
                     </div>
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        rep.status === "complete"
-                          ? "bg-green-900 text-green-300"
-                          : rep.status === "partial"
-                            ? "bg-yellow-900 text-yellow-300"
-                            : rep.status === "error"
-                              ? "bg-red-900 text-red-300"
-                              : rep.status === "processing"
-                                ? "bg-orange-900/60 text-orange-300"
-                                : "bg-gray-800 text-gray-300"
+                        rep.status === 'complete'
+                          ? 'bg-green-900 text-green-300'
+                          : rep.status === 'partial'
+                            ? 'bg-yellow-900 text-yellow-300'
+                            : rep.status === 'error'
+                              ? 'bg-red-900 text-red-300'
+                              : rep.status === 'processing'
+                                ? 'bg-orange-900/60 text-orange-300'
+                                : 'bg-gray-800 text-gray-300'
                       }`}
                     >
-                      {rep.status === "processing" ? "Generating" : rep.status}
+                      {rep.status === 'processing' ? 'Generating' : rep.status}
                     </span>
                   </a>
                 ))}
               </div>
             )}
-            {reports.length === 0 && films.filter((f) => f.status === "processed").length === 0 && (
+            {reports.length === 0 && films.filter((f) => f.status === 'processed').length === 0 && (
               <p className="text-gray-400">
-                Upload a film and wait for it to process before generating a
-                report.
+                Upload a film and wait for it to process before generating a report.
               </p>
             )}
-            {films.filter((f) => f.status === "processed").length > 0 && (
+            {films.filter((f) => f.status === 'processed').length > 0 && (
               <button
                 onClick={handleGenerateReport}
                 disabled={generating}
                 className="mt-4 rounded bg-brand px-4 py-2 text-sm font-semibold text-black hover:bg-orange-400 disabled:opacity-50"
               >
-                {generating ? "Starting..." : "Generate Report"}
+                {generating ? 'Starting...' : 'Generate Report'}
               </button>
             )}
           </div>

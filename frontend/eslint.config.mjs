@@ -25,13 +25,7 @@ export default [
   // semantics). Skip generated/build output and the auto-generated Next types
   // file. `node_modules` is excluded by ESLint by default but listed for clarity.
   {
-    ignores: [
-      '.next/**',
-      'out/**',
-      'dist/**',
-      'next-env.d.ts',
-      'node_modules/**',
-    ],
+    ignores: ['.next/**', 'out/**', 'dist/**', 'next-env.d.ts', 'node_modules/**'],
   },
   ...compat.extends('next/core-web-vitals'),
   ...tseslint.configs.recommended,

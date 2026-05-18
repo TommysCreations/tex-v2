@@ -1,22 +1,18 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useSearchParams } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
-import {
-  filmUploadAbort,
-  filmUploadComplete,
-  filmUploadInitiate,
-} from "@/lib/api";
+import { useAuth } from '@clerk/nextjs';
+import { useSearchParams } from 'next/navigation';
+import { useCallback, useRef, useState } from 'react';
+import { filmUploadAbort, filmUploadComplete, filmUploadInitiate } from '@/lib/api';
 
-type Step = "select" | "uploading" | "done" | "error";
+type Step = 'select' | 'uploading' | 'done' | 'error';
 
 export default function UploadPage() {
   const { getToken } = useAuth();
   const searchParams = useSearchParams();
-  const teamId = searchParams.get("team_id");
+  const teamId = searchParams.get('team_id');
 
-  const [step, setStep] = useState<Step>("select");
+  const [step, setStep] = useState<Step>('select');
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -25,9 +21,9 @@ export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
 
   const handleFile = useCallback((f: File) => {
-    const validTypes = ["video/mp4", "video/quicktime", "video/x-msvideo", "video/webm"];
+    const validTypes = ['video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
     if (!validTypes.includes(f.type) && !f.name.match(/\.(mp4|mov|avi|webm)$/i)) {
-      setError("Invalid file type. Please upload MP4, MOV, AVI, or WebM.");
+      setError('Invalid file type. Please upload MP4, MOV, AVI, or WebM.');
       return;
     }
     setFile(f);
@@ -36,7 +32,7 @@ export default function UploadPage() {
 
   async function handleUpload() {
     if (!file || !teamId) return;
-    setStep("uploading");
+    setStep('uploading');
     setProgress(0);
     setError(null);
 
@@ -44,7 +40,7 @@ export default function UploadPage() {
 
     try {
       const token = await getToken();
-      if (!token) throw new Error("Not authenticated");
+      if (!token) throw new Error('Not authenticated');
 
       // Step 1: Initiate — get presigned URL
       const { film_id, upload_url } = await filmUploadInitiate(token, {
@@ -58,33 +54,33 @@ export default function UploadPage() {
       // Step 2: Upload directly to R2
       const xhr = new XMLHttpRequest();
       await new Promise<void>((resolve, reject) => {
-        xhr.upload.addEventListener("progress", (e) => {
+        xhr.upload.addEventListener('progress', (e) => {
           if (e.lengthComputable) {
             setProgress(Math.round((e.loaded / e.total) * 100));
           }
         });
-        xhr.addEventListener("load", () => {
+        xhr.addEventListener('load', () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
             reject(new Error(`Upload failed: ${xhr.status}`));
           }
         });
-        xhr.addEventListener("error", () => reject(new Error("Upload failed")));
-        xhr.open("PUT", upload_url);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+        xhr.open('PUT', upload_url);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
         xhr.send(file);
       });
 
       // Step 3: Confirm upload complete (fresh token — the original may have
       // expired during a long R2 upload since Clerk JWTs live ~60 seconds)
       const freshToken = await getToken();
-      if (!freshToken) throw new Error("Not authenticated");
+      if (!freshToken) throw new Error('Not authenticated');
       await filmUploadComplete(freshToken, film_id);
-      setStep("done");
+      setStep('done');
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-      setStep("error");
+      setError(e instanceof Error ? e.message : 'Upload failed');
+      setStep('error');
 
       if (createdFilmId) {
         try {
@@ -110,15 +106,12 @@ export default function UploadPage() {
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-20">
-      <a
-        href={`/teams/${teamId}`}
-        className="text-sm text-gray-400 hover:text-white"
-      >
+      <a href={`/teams/${teamId}`} className="text-sm text-gray-400 hover:text-white">
         &larr; Back to team
       </a>
       <h1 className="mt-4 text-2xl font-bold text-white">Upload Game Film</h1>
 
-      {step === "select" && (
+      {step === 'select' && (
         <div className="mt-8">
           <div
             onDragOver={(e) => {
@@ -134,15 +127,11 @@ export default function UploadPage() {
             }}
             onClick={() => fileInputRef.current?.click()}
             className={`cursor-pointer rounded-lg border-2 border-dashed p-12 text-center ${
-              dragOver ? "border-brand bg-brand/10" : "border-border"
+              dragOver ? 'border-brand bg-brand/10' : 'border-border'
             }`}
           >
-            <p className="text-gray-300">
-              Drag and drop your game film here, or click to browse
-            </p>
-            <p className="mt-2 text-sm text-gray-500">
-              MP4, MOV, AVI, or WebM
-            </p>
+            <p className="text-gray-300">Drag and drop your game film here, or click to browse</p>
+            <p className="mt-2 text-sm text-gray-500">MP4, MOV, AVI, or WebM</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -158,9 +147,7 @@ export default function UploadPage() {
           {file && (
             <div className="mt-4 rounded-lg border border-border bg-surface p-4">
               <p className="font-medium text-white">{file.name}</p>
-              <p className="text-sm text-gray-400">
-                {(file.size / 1_000_000).toFixed(0)} MB
-              </p>
+              <p className="text-sm text-gray-400">{(file.size / 1_000_000).toFixed(0)} MB</p>
               <button
                 onClick={handleUpload}
                 className="mt-4 rounded bg-brand px-6 py-2 font-semibold text-black hover:bg-orange-400"
@@ -170,15 +157,11 @@ export default function UploadPage() {
             </div>
           )}
 
-          {error && (
-            <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">
-              {error}
-            </p>
-          )}
+          {error && <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">{error}</p>}
         </div>
       )}
 
-      {step === "uploading" && (
+      {step === 'uploading' && (
         <div className="mt-8">
           <p className="text-gray-300">
             Uploading {file?.name}... {progress}%
@@ -195,11 +178,10 @@ export default function UploadPage() {
         </div>
       )}
 
-      {step === "done" && (
+      {step === 'done' && (
         <div className="mt-8 text-center">
           <p className="text-lg text-white">
-            Film uploaded. TEX is processing your film — this takes 10–20
-            minutes.
+            Film uploaded. TEX is processing your film — this takes 10–20 minutes.
           </p>
           <a
             href="/dashboard"
@@ -210,14 +192,12 @@ export default function UploadPage() {
         </div>
       )}
 
-      {step === "error" && (
+      {step === 'error' && (
         <div className="mt-8">
-          <p className="rounded bg-red-900/50 px-4 py-2 text-red-300">
-            {error}
-          </p>
+          <p className="rounded bg-red-900/50 px-4 py-2 text-red-300">{error}</p>
           <button
             onClick={() => {
-              setStep("select");
+              setStep('select');
               setFile(null);
               setProgress(0);
               setError(null);

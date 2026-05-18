@@ -1,8 +1,8 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
-import { AdminUser, grantCredits, listAdminUsers } from "@/lib/api";
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
+import { AdminUser, grantCredits, listAdminUsers } from '@/lib/api';
 
 export default function AdminUsersPage() {
   const { getToken } = useAuth();
@@ -22,7 +22,7 @@ export default function AdminUsersPage() {
       setUsers(data);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load users");
+      setError(e instanceof Error ? e.message : 'Failed to load users');
     } finally {
       setLoading(false);
     }
@@ -38,17 +38,13 @@ export default function AdminUsersPage() {
     try {
       const result = await grantCredits(token, userId, creditAmount);
       setUsers((prev) =>
-        prev.map((u) =>
-          u.id === userId
-            ? { ...u, report_credits: result.new_balance }
-            : u
-        )
+        prev.map((u) => (u.id === userId ? { ...u, report_credits: result.new_balance } : u)),
       );
       setGrantingFor(null);
       setCreditAmount(1);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to grant credits");
+      setError(e instanceof Error ? e.message : 'Failed to grant credits');
     }
   }
 
@@ -58,14 +54,10 @@ export default function AdminUsersPage() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-white">
-        Users ({users.length})
-      </h2>
+      <h2 className="text-lg font-semibold text-white">Users ({users.length})</h2>
 
       {error && (
-        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">
-          {error}
-        </p>
+        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</p>
       )}
 
       <table className="mt-4 w-full text-left text-sm">
@@ -89,12 +81,8 @@ export default function AdminUsersPage() {
                   </span>
                 )}
               </td>
-              <td className="py-2 pr-4 text-right text-gray-300">
-                {u.report_count}
-              </td>
-              <td className="py-2 pr-4 text-right text-gray-300">
-                {u.report_credits}
-              </td>
+              <td className="py-2 pr-4 text-right text-gray-300">{u.report_count}</td>
+              <td className="py-2 pr-4 text-right text-gray-300">{u.report_credits}</td>
               <td className="py-2 pr-4 text-gray-400">
                 {new Date(u.created_at).toLocaleDateString()}
               </td>
@@ -105,9 +93,7 @@ export default function AdminUsersPage() {
                       type="number"
                       min={1}
                       value={creditAmount}
-                      onChange={(e) =>
-                        setCreditAmount(parseInt(e.target.value) || 1)
-                      }
+                      onChange={(e) => setCreditAmount(parseInt(e.target.value) || 1)}
                       className="w-16 rounded border border-border bg-background px-2 py-0.5 text-sm text-white"
                     />
                     <button
@@ -116,10 +102,7 @@ export default function AdminUsersPage() {
                     >
                       Grant
                     </button>
-                    <button
-                      onClick={() => setGrantingFor(null)}
-                      className="text-xs text-gray-500"
-                    >
+                    <button onClick={() => setGrantingFor(null)} className="text-xs text-gray-500">
                       Cancel
                     </button>
                   </div>

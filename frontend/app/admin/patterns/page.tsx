@@ -1,23 +1,23 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
-import { PatternAnalysis, getPatternAnalysis } from "@/lib/api";
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
+import { PatternAnalysis, getPatternAnalysis } from '@/lib/api';
 
 const SECTION_LABELS: Record<string, string> = {
-  offensive_sets: "Offensive Sets",
-  defensive_schemes: "Defensive Schemes",
-  pnr_coverage: "PnR Coverage",
-  player_pages: "Player Pages",
-  game_plan: "Game Plan",
-  adjustments_practice: "Adjustments",
+  offensive_sets: 'Offensive Sets',
+  defensive_schemes: 'Defensive Schemes',
+  pnr_coverage: 'PnR Coverage',
+  player_pages: 'Player Pages',
+  game_plan: 'Game Plan',
+  adjustments_practice: 'Adjustments',
 };
 
 export default function PatternsPage() {
   const { getToken } = useAuth();
   const [data, setData] = useState<PatternAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
-  const [version, setVersion] = useState("");
+  const [version, setVersion] = useState('');
 
   async function load() {
     try {
@@ -65,15 +65,11 @@ export default function PatternsPage() {
       {/* Summary stats */}
       <div className="mt-4 grid grid-cols-3 gap-4">
         <div className="rounded-lg border border-border bg-surface p-4 text-center">
-          <p className="text-2xl font-bold text-white">
-            {data.total_corrections}
-          </p>
+          <p className="text-2xl font-bold text-white">{data.total_corrections}</p>
           <p className="text-xs text-gray-400">Total Corrections</p>
         </div>
         <div className="rounded-lg border border-border bg-surface p-4 text-center">
-          <p className="text-2xl font-bold text-red-400">
-            {data.total_errors}
-          </p>
+          <p className="text-2xl font-bold text-red-400">{data.total_errors}</p>
           <p className="text-xs text-gray-400">Errors Found</p>
         </div>
         <div className="rounded-lg border border-border bg-surface p-4 text-center">
@@ -83,7 +79,7 @@ export default function PatternsPage() {
                   (100 * (data.total_corrections - data.total_errors)) /
                   data.total_corrections
                 ).toFixed(1)
-              : "—"}
+              : '—'}
             %
           </p>
           <p className="text-xs text-gray-400">Accuracy Rate</p>
@@ -110,20 +106,16 @@ export default function PatternsPage() {
             {data.by_category.map((row) => (
               <tr key={row.category} className="border-b border-border/50">
                 <td className="py-2 pr-4 text-white">{row.category}</td>
-                <td className="py-2 pr-4 text-right text-gray-300">
-                  {row.total}
-                </td>
-                <td className="py-2 pr-4 text-right text-gray-300">
-                  {row.errors}
-                </td>
+                <td className="py-2 pr-4 text-right text-gray-300">{row.total}</td>
+                <td className="py-2 pr-4 text-right text-gray-300">{row.errors}</td>
                 <td className="py-2 text-right">
                   <span
                     className={`font-medium ${
                       row.error_rate > 20
-                        ? "text-red-400"
+                        ? 'text-red-400'
                         : row.error_rate > 10
-                          ? "text-yellow-400"
-                          : "text-green-400"
+                          ? 'text-yellow-400'
+                          : 'text-green-400'
                     }`}
                   >
                     {row.error_rate}%
@@ -157,20 +149,16 @@ export default function PatternsPage() {
                 <td className="py-2 pr-4 text-white">
                   {SECTION_LABELS[row.section_type] || row.section_type}
                 </td>
-                <td className="py-2 pr-4 text-right text-gray-300">
-                  {row.total}
-                </td>
-                <td className="py-2 pr-4 text-right text-gray-300">
-                  {row.errors}
-                </td>
+                <td className="py-2 pr-4 text-right text-gray-300">{row.total}</td>
+                <td className="py-2 pr-4 text-right text-gray-300">{row.errors}</td>
                 <td className="py-2 text-right">
                   <span
                     className={`font-medium ${
                       row.error_rate > 20
-                        ? "text-red-400"
+                        ? 'text-red-400'
                         : row.error_rate > 10
-                          ? "text-yellow-400"
-                          : "text-green-400"
+                          ? 'text-yellow-400'
+                          : 'text-green-400'
                     }`}
                   >
                     {row.error_rate}%
