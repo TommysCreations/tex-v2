@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -32,9 +32,7 @@ def _get_prompt_version() -> str:
 
 
 @router.post("", response_model=ReportCreateResponse, status_code=201)
-async def create_report(
-    body: ReportCreate, user: dict = Depends(get_current_user)
-):
+async def create_report(body: ReportCreate, user: dict = Depends(get_current_user)):
     """Create a scouting report for the given team and films.
 
     Checks the payment gate:
@@ -56,8 +54,7 @@ async def create_report(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id FROM teams "
-                "WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
+                "SELECT id FROM teams WHERE id = %s AND user_id = %s AND deleted_at IS NULL",
                 (body.team_id, user_id),
             )
             if not cur.fetchone():
@@ -123,12 +120,13 @@ async def create_report(
     except ValueError as exc:
         # consume_entitlement raises ValueError on race (credits exhausted).
         conn.rollback()
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     finally:
         conn.close()
 
     # Enqueue after commit — worker must see the reports row.
     from tasks.report_generation import generate_report
+
     generate_report.delay(report_id)
 
     logger.info(

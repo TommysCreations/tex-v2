@@ -4,6 +4,7 @@ import subprocess
 
 class FilmValidationError(Exception):
     """Raised when FFprobe validation fails with a coach-facing message."""
+
     pass
 
 
@@ -17,8 +18,10 @@ def get_duration(local_path: str) -> float:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 local_path,
             ],
@@ -50,8 +53,10 @@ def validate_film_file(local_path: str) -> dict:
         result = subprocess.run(
             [
                 "ffprobe",
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 local_path,
@@ -60,10 +65,10 @@ def validate_film_file(local_path: str) -> dict:
             text=True,
             timeout=60,
         )
-    except subprocess.TimeoutExpired:
-        raise FilmValidationError("Film validation timed out. The file may be corrupted.")
-    except FileNotFoundError:
-        raise FilmValidationError("FFprobe is not installed on this worker.")
+    except subprocess.TimeoutExpired as err:
+        raise FilmValidationError("Film validation timed out. The file may be corrupted.") from err
+    except FileNotFoundError as err:
+        raise FilmValidationError("FFprobe is not installed on this worker.") from err
 
     if result.returncode != 0:
         raise FilmValidationError(
@@ -72,10 +77,10 @@ def validate_film_file(local_path: str) -> dict:
 
     try:
         probe_data = json.loads(result.stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as err:
         raise FilmValidationError(
             "Could not read video metadata. The file may be corrupted."
-        )
+        ) from err
 
     # Check for video stream
     streams = probe_data.get("streams", [])
@@ -93,15 +98,16 @@ def validate_film_file(local_path: str) -> dict:
     if not duration_str:
         # Some containers (MKV) don't report duration in format — try nb_frames / r_frame_rate
         raise FilmValidationError(
-            "Could not determine video duration. The file may be corrupted or in an unsupported format."
+            "Could not determine video duration. "
+            "The file may be corrupted or in an unsupported format."
         )
 
     try:
         duration = float(duration_str)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as err:
         raise FilmValidationError(
             "Could not determine video duration. The file may be corrupted."
-        )
+        ) from err
 
     if duration < 60:
         raise FilmValidationError(

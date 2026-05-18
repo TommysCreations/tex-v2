@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
 import {
   Film,
   Notification,
@@ -12,17 +12,17 @@ import {
   listTeams,
   markNotificationRead,
   seedUser,
-} from "@/lib/api";
+} from '@/lib/api';
 
 const LEVELS = [
-  { value: "d1", label: "D1" },
-  { value: "d2", label: "D2" },
-  { value: "d3", label: "D3" },
-  { value: "eybl", label: "EYBL" },
-  { value: "eybl_scholastic", label: "EYBL Scholastic" },
-  { value: "aau", label: "AAU" },
-  { value: "high_school", label: "High School" },
-  { value: "unknown", label: "Unknown" },
+  { value: 'd1', label: 'D1' },
+  { value: 'd2', label: 'D2' },
+  { value: 'd3', label: 'D3' },
+  { value: 'eybl', label: 'EYBL' },
+  { value: 'eybl_scholastic', label: 'EYBL Scholastic' },
+  { value: 'aau', label: 'AAU' },
+  { value: 'high_school', label: 'High School' },
+  { value: 'unknown', label: 'Unknown' },
 ];
 
 function levelLabel(value: string): string {
@@ -39,8 +39,8 @@ export default function DashboardPage() {
 
   // New Team modal state
   const [showModal, setShowModal] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newLevel, setNewLevel] = useState("unknown");
+  const [newName, setNewName] = useState('');
+  const [newLevel, setNewLevel] = useState('unknown');
   const [creating, setCreating] = useState(false);
 
   async function loadData() {
@@ -50,7 +50,7 @@ export default function DashboardPage() {
 
       // In local dev, ensure the user row exists before any API call.
       // This replaces the Clerk webhook which can't reach localhost.
-      if (process.env.NODE_ENV === "development") {
+      if (process.env.NODE_ENV === 'development') {
         await seedUser(token).catch(() => {});
       }
 
@@ -64,7 +64,7 @@ export default function DashboardPage() {
       setNotifications(n);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load data");
+      setError(e instanceof Error ? e.message : 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -83,11 +83,11 @@ export default function DashboardPage() {
       if (!token) return;
       await createTeam(token, { name: newName.trim(), level: newLevel });
       setShowModal(false);
-      setNewName("");
-      setNewLevel("unknown");
+      setNewName('');
+      setNewLevel('unknown');
       await loadData();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create team");
+      setError(e instanceof Error ? e.message : 'Failed to create team');
     } finally {
       setCreating(false);
     }
@@ -108,12 +108,10 @@ export default function DashboardPage() {
     return (
       <div className="mx-auto max-w-2xl px-6 py-20 text-center">
         <h1 className="text-2xl font-bold text-white">Couldn&apos;t load dashboard</h1>
-        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">
-          {error}
-        </p>
+        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</p>
         <p className="mt-6 text-sm text-gray-400">
-          This usually means the backend isn&apos;t reachable or your session
-          token expired. Try refreshing.
+          This usually means the backend isn&apos;t reachable or your session token expired. Try
+          refreshing.
         </p>
         <button
           onClick={() => {
@@ -135,8 +133,7 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-2xl px-6 py-20 text-center">
         <h1 className="text-3xl font-bold text-white">Welcome to TEX</h1>
         <p className="mt-4 text-gray-400">
-          TEX analyzes game film and generates a PDF scouting report in 30–50
-          minutes.
+          TEX analyzes game film and generates a PDF scouting report in 30–50 minutes.
         </p>
         <div className="mt-8 space-y-4 text-left text-gray-300">
           <div className="flex items-start gap-3">
@@ -182,11 +179,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      {error && (
-        <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">
-          {error}
-        </p>
-      )}
+      {error && <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">{error}</p>}
 
       {/* Notifications */}
       {notifications.filter((n) => !n.read_at).length > 0 && (
@@ -223,10 +216,8 @@ export default function DashboardPage() {
                         await markNotificationRead(token, n.id);
                         setNotifications((prev) =>
                           prev.map((x) =>
-                            x.id === n.id
-                              ? { ...x, read_at: new Date().toISOString() }
-                              : x
-                          )
+                            x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x,
+                          ),
                         );
                       }}
                       className="text-xs text-gray-500 hover:text-gray-300"
@@ -254,7 +245,7 @@ export default function DashboardPage() {
               <h3 className="font-semibold text-white">{team.name}</h3>
               <p className="mt-1 text-sm text-gray-400">
                 {levelLabel(team.level)} &middot; {teamFilms.length} film
-                {teamFilms.length !== 1 ? "s" : ""}
+                {teamFilms.length !== 1 ? 's' : ''}
               </p>
             </a>
           );
@@ -264,9 +255,7 @@ export default function DashboardPage() {
       {/* Recent Films */}
       {films.length > 0 && (
         <>
-          <h2 className="mt-10 text-lg font-semibold text-gray-300">
-            Recent Films
-          </h2>
+          <h2 className="mt-10 text-lg font-semibold text-gray-300">Recent Films</h2>
           <div className="mt-4 space-y-2">
             {films.slice(0, 5).map((film) => (
               <div
@@ -274,20 +263,18 @@ export default function DashboardPage() {
                 className="flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3"
               >
                 <div>
-                  <p className="text-sm font-medium text-white">
-                    {film.file_name}
-                  </p>
+                  <p className="text-sm font-medium text-white">{film.file_name}</p>
                   <p className="text-xs text-gray-400">
                     {(film.file_size_bytes / 1_000_000).toFixed(0)} MB
                   </p>
                 </div>
                 <span
                   className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                    film.status === "processed"
-                      ? "bg-green-900 text-green-300"
-                      : film.status === "error"
-                        ? "bg-red-900 text-red-300"
-                        : "bg-yellow-900 text-yellow-300"
+                    film.status === 'processed'
+                      ? 'bg-green-900 text-green-300'
+                      : film.status === 'error'
+                        ? 'bg-red-900 text-red-300'
+                        : 'bg-yellow-900 text-yellow-300'
                   }`}
                 >
                   {film.status}
@@ -323,9 +310,7 @@ export default function DashboardPage() {
             />
           </div>
           <div className="mt-4">
-            <label className="block text-sm text-gray-400">
-              Competition Level
-            </label>
+            <label className="block text-sm text-gray-400">Competition Level</label>
             <select
               value={newLevel}
               onChange={(e) => setNewLevel(e.target.value)}
@@ -351,7 +336,7 @@ export default function DashboardPage() {
               disabled={creating || !newName.trim()}
               className="rounded bg-brand px-4 py-2 text-sm font-semibold text-black hover:bg-orange-400 disabled:opacity-50"
             >
-              {creating ? "Creating..." : "Create Team"}
+              {creating ? 'Creating...' : 'Create Team'}
             </button>
           </div>
         </form>

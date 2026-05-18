@@ -5,9 +5,9 @@ import time
 import redis
 
 RATE_LIMITS = {
-    "gemini-2.5-pro": 3,      # requests per 60 seconds — update when quota increases
-    "gemini-2.5-flash": 15,   # requests per 60 seconds
-    "gemini-file-api": 10,    # file uploads per 60 seconds — separate from model rate limits
+    "gemini-2.5-pro": 3,  # requests per 60 seconds — update when quota increases
+    "gemini-2.5-flash": 15,  # requests per 60 seconds
+    "gemini-file-api": 10,  # file uploads per 60 seconds — separate from model rate limits
 }
 
 

@@ -7,7 +7,6 @@ import traceback
 from celery import group
 from celery.exceptions import SoftTimeLimitExceeded
 
-from tasks.celery_app import celery_app
 from services.ai.router import get_ai_provider
 from services.db import get_connection
 from services.ffmpeg import FFmpegError, compress_film, split_film
@@ -18,6 +17,7 @@ from services.prompts import load_prompt
 from services.r2 import download_from_r2, upload_to_r2
 from services.rate_limit import acquire_gemini_slot
 from services.roster_format import format_roster_for_prompt
+from tasks.celery_app import celery_app
 
 log = logging.getLogger(__name__)
 
@@ -36,12 +36,13 @@ def _load_preprocess_prompt(section_type: str) -> tuple[str, str]:
         raise NotImplementedError(
             f"Prompt file for '{section_type}' is not written yet. "
             f"See ROADMAP.md ACTIVE BLOCKERS. Underlying: {e}"
-        )
+        ) from e
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _compute_sha256(file_path: str) -> str:
     """Compute SHA-256 hash of a file using streaming reads."""
@@ -52,10 +53,17 @@ def _compute_sha256(file_path: str) -> str:
     return sha256.hexdigest()
 
 
-def _write_dead_letter(task_name: str, task_args: dict, queue: str,
-                       error_message: str, error_tb: str, retry_count: int,
-                       film_id: str = None, report_id: str = None,
-                       user_id: str = None):
+def _write_dead_letter(
+    task_name: str,
+    task_args: dict,
+    queue: str,
+    error_message: str,
+    error_tb: str | None,
+    retry_count: int,
+    film_id: str | None = None,
+    report_id: str | None = None,
+    user_id: str | None = None,
+):
     """Write a dead letter row for a task that has exhausted retries."""
     conn = get_connection()
     try:
@@ -65,9 +73,17 @@ def _write_dead_letter(task_name: str, task_args: dict, queue: str,
                 "(task_name, task_args, queue, error_message, error_traceback, "
                 "retry_count, film_id, report_id, user_id) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (task_name, json.dumps(task_args), queue,
-                 error_message[:2000], (error_tb or "")[:4000],
-                 retry_count, film_id, report_id, user_id),
+                (
+                    task_name,
+                    json.dumps(task_args),
+                    queue,
+                    error_message[:2000],
+                    (error_tb or "")[:4000],
+                    retry_count,
+                    film_id,
+                    report_id,
+                    user_id,
+                ),
             )
         conn.commit()
     except Exception:
@@ -80,8 +96,12 @@ def _write_dead_letter(task_name: str, task_args: dict, queue: str,
         conn.close()
 
 
-def _update_film_status(film_id: str, status: str, error_message: str = None,
-                        gemini_processing_status: str = None):
+def _update_film_status(
+    film_id: str,
+    status: str,
+    error_message: str | None = None,
+    gemini_processing_status: str | None = None,
+):
     """Update films.status and optionally error_message and gemini_processing_status."""
     conn = get_connection()
     try:
@@ -140,7 +160,8 @@ def _chunk_film_runtime_minute_bounds(film_id: str, chunk_index: int) -> tuple[s
     chunk_dur = next((d for idx, d in rows if idx == chunk_index), None)
     if chunk_dur is None:
         log.warning(
-            "_chunk_film_runtime_minute_bounds: chunk_index=%s missing for film_id=%s — using 0.0–0.0",
+            "_chunk_film_runtime_minute_bounds: chunk_index=%s missing "
+            "for film_id=%s — using 0.0–0.0",
             chunk_index,
             film_id,
         )
@@ -170,11 +191,7 @@ def _build_chunk_extraction_prompt(
     team_id = film_row[0] if film_row else None
     chunk_count_col = film_row[1] if film_row else None
 
-    roster_text = (
-        format_roster_for_prompt(team_id)
-        if team_id
-        else "(no roster data available)"
-    )
+    roster_text = format_roster_for_prompt(team_id) if team_id else "(no roster data available)"
 
     conn = get_connection()
     try:
@@ -226,12 +243,14 @@ def _fail_film_from_chunk(film_id: str, error_message: str):
 
     if updated:
         from tasks.notifications import notify_coach
+
         notify_coach.delay(film_id=film_id, notification_type="film_error")
 
 
 # ---------------------------------------------------------------------------
 # TASK: process_film
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     bind=True,
@@ -339,6 +358,7 @@ def process_film(self, film_id: str):
             )
             _update_film_status(film_id, "error", str(e))
             from tasks.notifications import notify_coach
+
             notify_coach.delay(film_id=film_id, notification_type="film_error")
             return
 
@@ -379,7 +399,12 @@ def process_film(self, film_id: str):
         for idx, chunk_path in enumerate(chunk_paths):
             r2_chunk_key = f"chunks/{film_id}/chunk_{idx:03d}.mp4"
 
-            log.info("process_film: uploading chunk %d/%d to R2 for film %s", idx + 1, chunk_count, film_id)
+            log.info(
+                "process_film: uploading chunk %d/%d to R2 for film %s",
+                idx + 1,
+                chunk_count,
+                film_id,
+            )
             upload_to_r2(bucket, r2_chunk_key, chunk_path)
 
             # Get chunk duration — use get_duration (no min/max validation)
@@ -405,16 +430,16 @@ def process_film(self, film_id: str):
                 conn.close()
 
         # 11. Enqueue extract_chunk tasks in parallel
-        log.info("process_film: enqueueing %d extract_chunk tasks for film %s", len(chunk_ids), film_id)
+        log.info(
+            "process_film: enqueueing %d extract_chunk tasks for film %s", len(chunk_ids), film_id
+        )
         task_group = group(
-            extract_chunk.s(film_id, chunk_id, chunk_index)
-            for chunk_id, chunk_index in chunk_ids
+            extract_chunk.s(film_id, chunk_id, chunk_index) for chunk_id, chunk_index in chunk_ids
         )
         task_group.apply_async()
 
         # 12. Update status
-        _update_film_status(film_id, "chunks_uploaded",
-                           gemini_processing_status="uploading")
+        _update_film_status(film_id, "chunks_uploaded", gemini_processing_status="uploading")
 
         log.info("process_film: film %s chunks uploaded, extract_chunk tasks enqueued", film_id)
 
@@ -447,6 +472,7 @@ def process_film(self, film_id: str):
         )
         _update_film_status(film_id, "error", str(exc))
         from tasks.notifications import notify_coach
+
         notify_coach.delay(film_id=film_id, notification_type="film_error")
 
     except Exception as exc:
@@ -463,8 +489,9 @@ def process_film(self, film_id: str):
             )
             _update_film_status(film_id, "error", str(exc))
             from tasks.notifications import notify_coach
+
             notify_coach.delay(film_id=film_id, notification_type="film_error")
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     finally:
         _cleanup_tmp(tmp_files)
@@ -473,6 +500,7 @@ def process_film(self, film_id: str):
 # ---------------------------------------------------------------------------
 # TASK: extract_chunk
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     bind=True,
@@ -525,8 +553,10 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
         # Gemini re-upload — Prompt 0A is the only work left.
         if gemini_file_state == "active" and existing_uri:
             log.info(
-                "extract_chunk: chunk %s already uploaded (extraction_status=%s), resuming at Prompt 0A",
-                chunk_id, extraction_status,
+                "extract_chunk: chunk %s already uploaded "
+                "(extraction_status=%s), resuming at Prompt 0A",
+                chunk_id,
+                extraction_status,
             )
             gemini_uri = existing_uri
 
@@ -534,8 +564,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
             try:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE film_chunks SET extraction_status = 'extracting' "
-                        "WHERE id = %s",
+                        "UPDATE film_chunks SET extraction_status = 'extracting' WHERE id = %s",
                         (chunk_id,),
                     )
                 conn.commit()
@@ -546,10 +575,14 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
             local_path = f"/tmp/{film_id}_chunk_{chunk_index:03d}.mp4"
             tmp_files.append(local_path)
 
-            log.info("extract_chunk: downloading chunk %d for film %s from R2", chunk_index, film_id)
+            log.info(
+                "extract_chunk: downloading chunk %d for film %s from R2", chunk_index, film_id
+            )
             download_from_r2(bucket, r2_chunk_key, local_path)
 
-            log.info("extract_chunk: uploading chunk %d for film %s to Gemini", chunk_index, film_id)
+            log.info(
+                "extract_chunk: uploading chunk %d for film %s to Gemini", chunk_index, film_id
+            )
             gemini_result = upload_to_gemini(local_path)
             gemini_uri = gemini_result["uri"]
 
@@ -567,15 +600,21 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
             finally:
                 conn.close()
 
-            log.info("extract_chunk: chunk %d for film %s is ACTIVE, uri=%s",
-                     chunk_index, film_id, gemini_uri[:60])
+            log.info(
+                "extract_chunk: chunk %d for film %s is ACTIVE, uri=%s",
+                chunk_index,
+                film_id,
+                gemini_uri[:60],
+            )
 
         # 3. Run Prompt 0A against this chunk's video.
         # Loader raises NotImplementedError if the prompt file is not yet
         # written — existing retry + dead letter handlers surface it.
         prompt_0a_tpl, prompt_0a_version = _load_preprocess_prompt("chunk_extraction")
         prompt_0a = _build_chunk_extraction_prompt(
-            prompt_0a_tpl, film_id, chunk_index,
+            prompt_0a_tpl,
+            film_id,
+            chunk_index,
         )
 
         log.info(
@@ -607,8 +646,11 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
 
         log.info(
             "extract_chunk: Prompt 0A complete for chunk %d film %s (%d chars, %d/%d tokens)",
-            chunk_index, film_id, len(extraction_output),
-            provider.last_tokens_input, provider.last_tokens_output,
+            chunk_index,
+            film_id,
+            len(extraction_output),
+            provider.last_tokens_input,
+            provider.last_tokens_output,
         )
 
         # 6. Check if all chunks for this film are now active (atomic check)
@@ -617,8 +659,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
             with conn.cursor() as cur:
                 # Advisory lock prevents two chunks completing simultaneously
                 # from both enqueueing synthesis
-                cur.execute("SELECT pg_try_advisory_xact_lock(%s)",
-                            (abs(hash(film_id)) % (2**31),))
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (abs(hash(film_id)) % (2**31),))
                 locked = cur.fetchone()[0]
                 if locked:
                     cur.execute(
@@ -628,7 +669,10 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                     )
                     incomplete = cur.fetchone()[0]
                     if incomplete == 0:
-                        log.info("extract_chunk: all chunks extracted for film %s, enqueueing synthesis", film_id)
+                        log.info(
+                            "extract_chunk: all chunks extracted for film %s, enqueueing synthesis",
+                            film_id,
+                        )
                         run_chunk_synthesis.delay(film_id)
             conn.commit()
         finally:
@@ -656,7 +700,9 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
 
     except GeminiUploadError as exc:
         if self.request.retries >= self.max_retries:
-            log.error("extract_chunk: Gemini upload failed after retries for chunk %s: %s", chunk_id, exc)
+            log.error(
+                "extract_chunk: Gemini upload failed after retries for chunk %s: %s", chunk_id, exc
+            )
             conn = get_connection()
             try:
                 with conn.cursor() as cur:
@@ -682,7 +728,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 film_id,
                 f"Chunk {chunk_index} failed to upload to Gemini: {exc}",
             )
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     except Exception as exc:
         if self.request.retries >= self.max_retries:
@@ -711,7 +757,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 film_id,
                 f"Chunk {chunk_index} failed: {exc}",
             )
-        raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
+        raise self.retry(exc=exc, countdown=_backoff(self.request.retries)) from exc
 
     finally:
         _cleanup_tmp(tmp_files)
@@ -720,6 +766,7 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
 # ---------------------------------------------------------------------------
 # TASK: run_chunk_synthesis (Prompt 0B — full-game synthesis)
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     bind=True,
@@ -774,11 +821,15 @@ def run_chunk_synthesis(self, film_id: str):
             # Gate should have prevented this. If we got here anyway, bail
             # rather than synthesize a partial document.
             log.error(
-                "run_chunk_synthesis: film %s has %d chunks with extraction_status != 'complete' (indexes=%s)",
-                film_id, len(incomplete), incomplete,
+                "run_chunk_synthesis: film %s has %d chunks with "
+                "extraction_status != 'complete' (indexes=%s)",
+                film_id,
+                len(incomplete),
+                incomplete,
             )
             _update_film_status(
-                film_id, "error",
+                film_id,
+                "error",
                 f"Cannot synthesize — {len(incomplete)} chunk(s) failed extraction",
             )
             return
@@ -795,8 +846,7 @@ def run_chunk_synthesis(self, film_id: str):
         roster_text = format_roster_for_prompt(team_id) if team_id else "(no team)"
 
         context = (
-            "PER-CHUNK EXTRACTIONS:\n" + extractions_text
-            + "\n\n---\n\nROSTER:\n" + roster_text
+            "PER-CHUNK EXTRACTIONS:\n" + extractions_text + "\n\n---\n\nROSTER:\n" + roster_text
         )
 
         # 3. Load Prompt 0B. Stub raises NotImplementedError if not written.
@@ -804,7 +854,10 @@ def run_chunk_synthesis(self, film_id: str):
 
         log.info(
             "run_chunk_synthesis: running Prompt 0B (%s) on film %s (%d chunks, %d context chars)",
-            prompt_0b_version, film_id, total_count, len(context),
+            prompt_0b_version,
+            film_id,
+            total_count,
+            len(context),
         )
 
         # 4. Call Gemini Flash via analyze_text (text-only, no video re-read).
@@ -820,7 +873,9 @@ def run_chunk_synthesis(self, film_id: str):
         # Preserve any existing `sections` cache (set by prior reports at the
         # same file_hash) — only overwrite synthesis_document and metadata.
         if not file_hash:
-            log.error("run_chunk_synthesis: film %s has no file_hash — cannot cache synthesis", film_id)
+            log.error(
+                "run_chunk_synthesis: film %s has no file_hash — cannot cache synthesis", film_id
+            )
             _update_film_status(film_id, "error", "Missing file_hash on film row")
             return
 
@@ -846,8 +901,10 @@ def run_chunk_synthesis(self, film_id: str):
         _update_film_status(film_id, "processed", gemini_processing_status="active")
         log.info(
             "run_chunk_synthesis: film %s synthesized (%d chars, %d/%d tokens)",
-            film_id, len(synthesis_document),
-            provider.last_tokens_input, provider.last_tokens_output,
+            film_id,
+            len(synthesis_document),
+            provider.last_tokens_input,
+            provider.last_tokens_output,
         )
 
     except Exception as exc:
@@ -862,4 +919,4 @@ def run_chunk_synthesis(self, film_id: str):
                 film_id=film_id,
             )
             _update_film_status(film_id, "error", f"Synthesis failed: {exc}")
-        raise self.retry(exc=exc, countdown=60)
+        raise self.retry(exc=exc, countdown=60) from exc

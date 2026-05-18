@@ -1,0 +1,13 @@
+# Mirrors the ignores list in frontend/eslint.config.mjs. Prettier doesn't
+# read .eslintignore or the eslint flat config, so the lists must be kept
+# in sync manually. Bump both in lockstep.
+
+.next/
+out/
+dist/
+node_modules/
+next-env.d.ts
+
+# Lockfiles — prettier reformats JSON globally but the lockfile format is
+# managed by npm/yarn/pnpm and shouldn't be touched.
+package-lock.json

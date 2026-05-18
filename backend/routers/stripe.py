@@ -2,15 +2,16 @@ import json
 import logging
 import os
 
-import stripe as stripe_sdk
+import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
+from stripe import SignatureVerificationError, StripeError
 
 from models.schemas import CheckoutSessionCreate, CheckoutSessionResponse
 from services.clerk import get_current_user
 from services.db import get_connection
 from services.payment_gate import STRIPE_REQUIRED, consume_entitlement
 from services.prompts import load_prompt
-from services.stripe_client import get_stripe, verify_webhook
+from services.stripe_client import configure_stripe, verify_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ async def create_checkout_session(
     finally:
         conn.close()
 
-    stripe = get_stripe()
+    configure_stripe()
 
     # Create Stripe customer if the user doesn't have one yet.
     # Customer creation is not strictly required for one-off Checkout in payment
@@ -74,17 +75,18 @@ async def create_checkout_session(
                 email=user["email"],
                 metadata={"tex_user_id": user_id},
             )
-        except stripe_sdk.error.StripeError as e:
+        except StripeError as e:
             logger.exception("Stripe customer create failed", extra={"user_id": user_id})
-            raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
+            raise HTTPException(
+                status_code=502, detail=f"Stripe error: {e.user_message or str(e)}"
+            ) from e
 
         customer_id = customer.id
         conn = get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE users SET stripe_customer_id = %s, updated_at = now() "
-                    "WHERE id = %s",
+                    "UPDATE users SET stripe_customer_id = %s, updated_at = now() WHERE id = %s",
                     (customer_id, user_id),
                 )
             conn.commit()
@@ -129,10 +131,14 @@ async def create_checkout_session(
             metadata=metadata,
             payment_intent_data={"metadata": metadata},
         )
-    except stripe_sdk.error.StripeError as e:
-        logger.exception("Stripe checkout session create failed",
-                         extra={"user_id": user_id, "payment_id": payment_id})
-        raise HTTPException(status_code=502, detail=f"Stripe error: {e.user_message or str(e)}")
+    except StripeError as e:
+        logger.exception(
+            "Stripe checkout session create failed",
+            extra={"user_id": user_id, "payment_id": payment_id},
+        )
+        raise HTTPException(
+            status_code=502, detail=f"Stripe error: {e.user_message or str(e)}"
+        ) from e
 
     # Update the payment row with the real session id and amount.
     conn = get_connection()
@@ -141,13 +147,13 @@ async def create_checkout_session(
             cur.execute(
                 "UPDATE payments SET stripe_session_id = %s, amount_cents = %s, "
                 "currency = %s, updated_at = now() WHERE id = %s",
-                (session.id, session.amount_total or 0,
-                 (session.currency or "usd"), payment_id),
+                (session.id, session.amount_total or 0, (session.currency or "usd"), payment_id),
             )
         conn.commit()
     finally:
         conn.close()
 
+    assert session.url is not None, "Stripe returned no checkout URL for payment-mode session"
     return CheckoutSessionResponse(checkout_url=session.url, payment_id=payment_id)
 
 
@@ -170,12 +176,12 @@ async def stripe_webhook(request: Request):
 
     try:
         event = verify_webhook(body, signature)
-    except stripe_sdk.error.SignatureVerificationError:
+    except SignatureVerificationError as err:
         logger.error("Stripe webhook signature verification failed")
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
-    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature") from err
+    except ValueError as err:
         logger.error("Stripe webhook payload parse failed")
-        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+        raise HTTPException(status_code=400, detail="Invalid webhook payload") from err
 
     event_type = event["type"]
     data = event["data"]["object"]
@@ -256,8 +262,7 @@ async def stripe_webhook(request: Request):
 
                     # 4. Link payment row to the report.
                     cur.execute(
-                        "UPDATE payments SET report_id = %s, updated_at = now() "
-                        "WHERE id = %s",
+                        "UPDATE payments SET report_id = %s, updated_at = now() WHERE id = %s",
                         (report_id, payment_id),
                     )
 
@@ -272,6 +277,7 @@ async def stripe_webhook(request: Request):
             # commits above — otherwise a worker could pick up the task before
             # the reports row is visible.
             from tasks.report_generation import generate_report
+
             generate_report.delay(report_id)
             logger.info(
                 "Stripe webhook: generate_report enqueued",
@@ -302,22 +308,22 @@ async def stripe_webhook(request: Request):
                     if cur.rowcount == 0:
                         logger.error(
                             "Stripe webhook: no payment row for failed PI",
-                            extra={"payment_intent_id": payment_intent_id,
-                                   "tex_payment_id": tex_payment_id},
+                            extra={
+                                "payment_intent_id": payment_intent_id,
+                                "tex_payment_id": tex_payment_id,
+                            },
                         )
                 conn.commit()
             finally:
                 conn.close()
 
         else:
-            logger.info("Stripe webhook: unhandled event type",
-                        extra={"event_type": event_type})
+            logger.info("Stripe webhook: unhandled event type", extra={"event_type": event_type})
 
     except HTTPException:
         raise
-    except Exception:
-        logger.exception("Stripe webhook handler error",
-                         extra={"event_type": event_type})
-        raise HTTPException(status_code=500, detail="Internal webhook processing error")
+    except Exception as err:
+        logger.exception("Stripe webhook handler error", extra={"event_type": event_type})
+        raise HTTPException(status_code=500, detail="Internal webhook processing error") from err
 
     return {"status": "ok"}

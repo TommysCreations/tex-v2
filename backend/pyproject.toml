@@ -1,0 +1,44 @@
+# Backend tooling config. Lives at backend/pyproject.toml (not repo root) per
+# D-021 — keeps Python tooling co-located with the Python code.
+#
+# Pinned tool versions (must match exactly across pre-commit + CI):
+#   ruff  == 0.15.13
+#   mypy  == 2.1.0
+#
+# Bump tool versions in lockstep across:
+#   - .pre-commit-config.yaml (rev: tags)
+#   - .github/workflows/backend.yml (pip install ...)
+#   - this file (the comment above)
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E = pycodestyle errors, F = pyflakes, W = pycodestyle warnings,
+# I = isort, UP = pyupgrade, B = flake8-bugbear
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008 ("Do not perform function call in argument defaults") is the canonical
+# pattern for FastAPI dependency injection (`x = Depends(...)`, `body = Body(...)`).
+# Scope the ignore to the files that legitimately use this pattern; B008 stays
+# enforced everywhere else where it catches real mutable-default-arg bugs.
+# Paths are relative to backend/pyproject.toml's location.
+"routers/*.py" = ["B008"]
+"services/clerk.py" = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+# Starting permissive to land the gate without a 500-finding backlog.
+# Tightening path tracked in D-021: strict-optional → disallow-untyped-defs
+# per-module → full strict. Each tightening step is its own PR.
+strict = false
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_ignores = true
+check_untyped_defs = true

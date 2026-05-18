@@ -1,16 +1,16 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8001';
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { token?: string } = {}
+  options: RequestInit & { token?: string } = {},
 ): Promise<T> {
   const { token, ...fetchOptions } = options;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    'Content-Type': 'application/json',
     ...(fetchOptions.headers as Record<string, string>),
   };
   if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   const res = await fetch(`${API_BASE}${path}`, {
@@ -33,7 +33,7 @@ async function apiFetch<T>(
 // --- Dev seed ---
 
 export function seedUser(token: string): Promise<{ id: string; clerk_id: string; email: string }> {
-  return apiFetch("/dev/seed-user", { method: "POST", token });
+  return apiFetch('/dev/seed-user', { method: 'POST', token });
 }
 
 // --- Teams ---
@@ -47,15 +47,12 @@ export interface Team {
 }
 
 export function listTeams(token: string): Promise<Team[]> {
-  return apiFetch("/teams/", { token });
+  return apiFetch('/teams/', { token });
 }
 
-export function createTeam(
-  token: string,
-  data: { name: string; level: string }
-): Promise<Team> {
-  return apiFetch("/teams/", {
-    method: "POST",
+export function createTeam(token: string, data: { name: string; level: string }): Promise<Team> {
+  return apiFetch('/teams/', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
@@ -68,17 +65,17 @@ export function getTeam(token: string, teamId: string): Promise<Team> {
 export function updateTeam(
   token: string,
   teamId: string,
-  data: { name?: string; level?: string }
+  data: { name?: string; level?: string },
 ): Promise<Team> {
   return apiFetch(`/teams/${teamId}`, {
-    method: "PATCH",
+    method: 'PATCH',
     token,
     body: JSON.stringify(data),
   });
 }
 
 export function deleteTeam(token: string, teamId: string): Promise<void> {
-  return apiFetch(`/teams/${teamId}`, { method: "DELETE", token });
+  return apiFetch(`/teams/${teamId}`, { method: 'DELETE', token });
 }
 
 // --- Films ---
@@ -97,7 +94,7 @@ export interface Film {
 }
 
 export function listFilms(token: string): Promise<Film[]> {
-  return apiFetch("/films/", { token });
+  return apiFetch('/films/', { token });
 }
 
 export function getFilm(token: string, filmId: string): Promise<Film> {
@@ -111,39 +108,33 @@ export interface FilmUploadInitiateResponse {
 
 export function filmUploadInitiate(
   token: string,
-  data: { team_id: string; file_name: string; file_size_bytes: number }
+  data: { team_id: string; file_name: string; file_size_bytes: number },
 ): Promise<FilmUploadInitiateResponse> {
-  return apiFetch("/films/upload-initiate", {
-    method: "POST",
+  return apiFetch('/films/upload-initiate', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
 }
 
-export function filmUploadComplete(
-  token: string,
-  filmId: string
-): Promise<Film> {
-  return apiFetch("/films/upload-complete", {
-    method: "POST",
+export function filmUploadComplete(token: string, filmId: string): Promise<Film> {
+  return apiFetch('/films/upload-complete', {
+    method: 'POST',
     token,
     body: JSON.stringify({ film_id: filmId }),
   });
 }
 
-export function filmUploadAbort(
-  token: string,
-  filmId: string
-): Promise<void> {
-  return apiFetch("/films/upload-abort", {
-    method: "POST",
+export function filmUploadAbort(token: string, filmId: string): Promise<void> {
+  return apiFetch('/films/upload-abort', {
+    method: 'POST',
     token,
     body: JSON.stringify({ film_id: filmId }),
   });
 }
 
 export function retryFilm(token: string, filmId: string): Promise<Film> {
-  return apiFetch(`/films/${filmId}/retry`, { method: "POST", token });
+  return apiFetch(`/films/${filmId}/retry`, { method: 'POST', token });
 }
 
 // --- Roster ---
@@ -162,10 +153,7 @@ export interface RosterPlayer {
   updated_at: string;
 }
 
-export function listRoster(
-  token: string,
-  teamId: string
-): Promise<RosterPlayer[]> {
+export function listRoster(token: string, teamId: string): Promise<RosterPlayer[]> {
   return apiFetch(`/roster/?team_id=${teamId}`, { token });
 }
 
@@ -180,36 +168,33 @@ export function createPlayer(
     dominant_hand?: string;
     role?: string;
     notes?: string;
-  }
+  },
 ): Promise<RosterPlayer> {
-  return apiFetch("/roster/", {
-    method: "POST",
+  return apiFetch('/roster/', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
 }
 
-export function getPlayer(
-  token: string,
-  playerId: string
-): Promise<RosterPlayer> {
+export function getPlayer(token: string, playerId: string): Promise<RosterPlayer> {
   return apiFetch(`/roster/${playerId}`, { token });
 }
 
 export function updatePlayer(
   token: string,
   playerId: string,
-  data: Partial<Omit<RosterPlayer, "id" | "team_id" | "created_at" | "updated_at">>
+  data: Partial<Omit<RosterPlayer, 'id' | 'team_id' | 'created_at' | 'updated_at'>>,
 ): Promise<RosterPlayer> {
   return apiFetch(`/roster/${playerId}`, {
-    method: "PATCH",
+    method: 'PATCH',
     token,
     body: JSON.stringify(data),
   });
 }
 
 export function deletePlayer(token: string, playerId: string): Promise<void> {
-  return apiFetch(`/roster/${playerId}`, { method: "DELETE", token });
+  return apiFetch(`/roster/${playerId}`, { method: 'DELETE', token });
 }
 
 // --- Reports ---
@@ -245,7 +230,7 @@ export interface ReportCreateResponse {
 }
 
 export function listReports(token: string): Promise<Report[]> {
-  return apiFetch("/reports", { token });
+  return apiFetch('/reports', { token });
 }
 
 export function getReport(token: string, reportId: string): Promise<ReportDetail> {
@@ -254,10 +239,10 @@ export function getReport(token: string, reportId: string): Promise<ReportDetail
 
 export function createReport(
   token: string,
-  data: { team_id: string; film_ids: string[] }
+  data: { team_id: string; film_ids: string[] },
 ): Promise<ReportCreateResponse> {
-  return apiFetch("/reports", {
-    method: "POST",
+  return apiFetch('/reports', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
@@ -275,15 +260,15 @@ export interface Notification {
 }
 
 export function listNotifications(token: string): Promise<Notification[]> {
-  return apiFetch("/notifications", { token });
+  return apiFetch('/notifications', { token });
 }
 
 export function markNotificationRead(token: string, notificationId: string): Promise<void> {
-  return apiFetch(`/notifications/${notificationId}/read`, { method: "PATCH", token });
+  return apiFetch(`/notifications/${notificationId}/read`, { method: 'PATCH', token });
 }
 
 export function markAllNotificationsRead(token: string): Promise<void> {
-  return apiFetch("/notifications/read-all", { method: "POST", token });
+  return apiFetch('/notifications/read-all', { method: 'POST', token });
 }
 
 // --- Stripe ---
@@ -295,10 +280,10 @@ export interface CheckoutSessionResponse {
 
 export function createCheckoutSession(
   token: string,
-  data: { team_id: string; film_ids: string[] }
+  data: { team_id: string; film_ids: string[] },
 ): Promise<CheckoutSessionResponse> {
-  return apiFetch("/stripe/create-checkout-session", {
-    method: "POST",
+  return apiFetch('/stripe/create-checkout-session', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
@@ -347,15 +332,20 @@ export interface AdminUser {
 
 export function listCorrections(
   token: string,
-  params?: { section_type?: string; prompt_version?: string; category?: string; is_correct?: boolean }
+  params?: {
+    section_type?: string;
+    prompt_version?: string;
+    category?: string;
+    is_correct?: boolean;
+  },
 ): Promise<CorrectionsResponse> {
   const query = new URLSearchParams();
-  if (params?.section_type) query.set("section_type", params.section_type);
-  if (params?.prompt_version) query.set("prompt_version", params.prompt_version);
-  if (params?.category) query.set("category", params.category);
-  if (params?.is_correct !== undefined) query.set("is_correct", String(params.is_correct));
+  if (params?.section_type) query.set('section_type', params.section_type);
+  if (params?.prompt_version) query.set('prompt_version', params.prompt_version);
+  if (params?.category) query.set('category', params.category);
+  if (params?.is_correct !== undefined) query.set('is_correct', String(params.is_correct));
   const qs = query.toString();
-  return apiFetch(`/admin/corrections${qs ? `?${qs}` : ""}`, { token });
+  return apiFetch(`/admin/corrections${qs ? `?${qs}` : ''}`, { token });
 }
 
 export function createCorrection(
@@ -371,10 +361,10 @@ export function createCorrection(
     confidence?: string;
     prompt_version: string;
     admin_notes?: string;
-  }
+  },
 ): Promise<{ id: string }> {
-  return apiFetch("/admin/corrections", {
-    method: "POST",
+  return apiFetch('/admin/corrections', {
+    method: 'POST',
     token,
     body: JSON.stringify(data),
   });
@@ -382,23 +372,23 @@ export function createCorrection(
 
 export function getPatternAnalysis(
   token: string,
-  promptVersion?: string
+  promptVersion?: string,
 ): Promise<PatternAnalysis> {
-  const qs = promptVersion ? `?prompt_version=${promptVersion}` : "";
+  const qs = promptVersion ? `?prompt_version=${promptVersion}` : '';
   return apiFetch(`/admin/pattern-analysis${qs}`, { token });
 }
 
 export function listAdminUsers(token: string): Promise<AdminUser[]> {
-  return apiFetch("/admin/users", { token });
+  return apiFetch('/admin/users', { token });
 }
 
 export function grantCredits(
   token: string,
   userId: string,
-  credits: number
+  credits: number,
 ): Promise<{ user_id: string; credits_granted: number; new_balance: number }> {
   return apiFetch(`/admin/users/${userId}/credits`, {
-    method: "POST",
+    method: 'POST',
     token,
     body: JSON.stringify({ credits }),
   });

@@ -1,13 +1,17 @@
 # Backend CI — runs on PRs that touch backend/ or this workflow.
 #
-# Scope in PR 3: install deps (catches version-pin / resolver bugs), ruff lint
-# at minimum-strictness, byte-compile every Python file (catches syntax errors
-# that import-style code might not surface until runtime). Mypy/pyright type
-# checking and pytest land in PR 4 once the ruff/mypy configs exist and once
-# tests are written — see D-019 and the PR 4 plan.
+# Scope (PR 4 baseline): install deps, ruff lint (E/F/W/I/UP/B per
+# backend/pyproject.toml), ruff format check, mypy typecheck (permissive
+# baseline — strict=false), byte-compile every Python file.
 #
-# All third-party actions pinned to major versions; Dependabot ( .github/dependabot.yml )
-# proposes weekly bumps in the github-actions ecosystem.
+# Tool versions pinned to match .pre-commit-config.yaml exactly:
+#   ruff == 0.15.13
+#   mypy == 2.1.0
+# Bump in lockstep across this file, .pre-commit-config.yaml, and
+# backend/pyproject.toml (header comment).
+#
+# All third-party actions pinned to major versions; Dependabot proposes
+# weekly bumps in the github-actions ecosystem.
 
 name: backend
 
@@ -40,23 +44,22 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements.txt
 
-      - name: Install dependencies
+      - name: Install runtime deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install ruff
-        # Pinned here until PR 4 adds [tool.ruff] config in pyproject.toml and
-        # the same ruff version is shared between local pre-commit and CI.
-        run: pip install ruff==0.6.*
+      - name: Install lint tools
+        run: pip install ruff==0.15.13 mypy==2.1.0
 
-      - name: Ruff lint (pyflakes subset)
-        # PR 3 enforces the F (pyflakes) subset only — catches undefined names,
-        # unused imports, redefined functions. PR 4 widens to E/W/I/UP/B once
-        # the project ruff config lands and the codebase passes the broader set.
-        run: ruff check --select F .
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy .
 
       - name: Byte-compile all backend modules
-        # py_compile catches syntax errors that ruff F might miss (e.g. invalid
-        # f-string expressions, mis-indented blocks) without needing a config.
         run: python -m compileall -q .

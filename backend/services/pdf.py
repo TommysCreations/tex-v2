@@ -9,6 +9,7 @@ import html
 import re
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import weasyprint
 
@@ -42,7 +43,7 @@ def assemble_pdf(
     """
     section_map = {s["section_type"]: s for s in sections}
     html_content = _build_html(section_map, team_name, report_date, is_partial)
-    return weasyprint.HTML(string=html_content).write_pdf()
+    return cast(bytes, weasyprint.HTML(string=html_content).write_pdf())
 
 
 def _build_html(
@@ -73,10 +74,7 @@ def _build_html(
         if status == "complete" and content:
             body = _text_to_html(content)
             sections_html.append(
-                f'<div class="section">'
-                f"<h2>{html.escape(section_title)}</h2>"
-                f"{body}"
-                f"</div>"
+                f'<div class="section"><h2>{html.escape(section_title)}</h2>{body}</div>'
             )
         else:
             sections_html.append(

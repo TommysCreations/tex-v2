@@ -89,6 +89,7 @@ def recover_stuck_jobs():
     # Re-enqueue stuck films.
     if stuck_films:
         from tasks.film_processing import process_film
+
         for (film_id,) in stuck_films:
             process_film.delay(str(film_id))
             log.info("Startup recovery: re-enqueued stuck film %s", film_id)
@@ -96,13 +97,17 @@ def recover_stuck_jobs():
     # Re-enqueue stuck reports.
     if stuck_reports:
         from tasks.report_generation import generate_report
+
         for (report_id,) in stuck_reports:
             generate_report.delay(str(report_id))
             log.info("Startup recovery: re-enqueued stuck report %s", report_id)
 
     total = len(stuck_films) + len(stuck_reports)
     if total:
-        log.info("Startup recovery complete: %d films, %d reports re-enqueued",
-                 len(stuck_films), len(stuck_reports))
+        log.info(
+            "Startup recovery complete: %d films, %d reports re-enqueued",
+            len(stuck_films),
+            len(stuck_reports),
+        )
     else:
         log.info("Startup recovery: no stuck jobs found")

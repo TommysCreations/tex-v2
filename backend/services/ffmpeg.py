@@ -4,6 +4,7 @@ import subprocess
 
 class FFmpegError(Exception):
     """Raised when an FFmpeg operation fails."""
+
     pass
 
 
@@ -21,23 +22,30 @@ def compress_film(input_path: str, output_path: str) -> None:
             [
                 "ffmpeg",
                 "-y",
-                "-i", input_path,
-                "-c:v", "libx264",
-                "-crf", "28",
-                "-vf", "scale=-2:720",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
+                "-i",
+                input_path,
+                "-c:v",
+                "libx264",
+                "-crf",
+                "28",
+                "-vf",
+                "scale=-2:720",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
                 output_path,
             ],
             capture_output=True,
             text=True,
             timeout=3600,
         )
-    except subprocess.TimeoutExpired:
-        raise FFmpegError("Film compression timed out after 60 minutes.")
-    except FileNotFoundError:
-        raise FFmpegError("FFmpeg is not installed on this worker.")
+    except subprocess.TimeoutExpired as err:
+        raise FFmpegError("Film compression timed out after 60 minutes.") from err
+    except FileNotFoundError as err:
+        raise FFmpegError("FFmpeg is not installed on this worker.") from err
 
     if result.returncode != 0:
         raise FFmpegError(f"Film compression failed: {result.stderr[:500]}")
@@ -57,22 +65,28 @@ def split_film(input_path: str, output_pattern: str) -> list[str]:
             [
                 "ffmpeg",
                 "-y",
-                "-i", input_path,
-                "-c", "copy",
-                "-map", "0",
-                "-segment_time", "1500",
-                "-f", "segment",
-                "-reset_timestamps", "1",
+                "-i",
+                input_path,
+                "-c",
+                "copy",
+                "-map",
+                "0",
+                "-segment_time",
+                "1500",
+                "-f",
+                "segment",
+                "-reset_timestamps",
+                "1",
                 output_pattern,
             ],
             capture_output=True,
             text=True,
             timeout=1800,
         )
-    except subprocess.TimeoutExpired:
-        raise FFmpegError("Film splitting timed out after 30 minutes.")
-    except FileNotFoundError:
-        raise FFmpegError("FFmpeg is not installed on this worker.")
+    except subprocess.TimeoutExpired as err:
+        raise FFmpegError("Film splitting timed out after 30 minutes.") from err
+    except FileNotFoundError as err:
+        raise FFmpegError("FFmpeg is not installed on this worker.") from err
 
     if result.returncode != 0:
         raise FFmpegError(f"Film splitting failed: {result.stderr[:500]}")

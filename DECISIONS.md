@@ -549,6 +549,40 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-021 — Linter and formatter configs
+
+**Date:** 2026-05-17
+**Status:** Adopted
+
+**Decision:** Adopted `ruff` (E/F/W/I/UP/B rules) + `mypy` (`strict=false` baseline) for backend, `eslint` (flat config, ESLint 9) + `prettier` for frontend. All four tools wired into both `.pre-commit-config.yaml` (local) and `.github/workflows/{backend,frontend}.yml` (CI gate). Versions pinned identically across local and CI:
+
+- `ruff == 0.15.13`
+- `mypy == 2.1.0`
+- `eslint == 9.39.4`
+- `typescript-eslint == 8.59.3`
+- `eslint-config-next == 15.5.18` (tracks Next.js major)
+- `prettier == 3.8.3`
+- `@eslint/eslintrc == 3.3.5` (FlatCompat shim — see Tech debt below)
+
+`pyproject.toml` lives at `backend/pyproject.toml` (not repo root) to keep backend tooling co-located with the backend code.
+
+**Rationale:** Closes audit findings I1 (full — pre-commit framework with gitleaks + hygiene + ruff/mypy/eslint/prettier hooks), I2 (Python lint/typecheck config), I3 (frontend lint/format config). Pre-PR-4, the only enforced rules were ruff F (unused-imports only) and gitleaks — anything else was on the honor system.
+
+**Tightening path:** mypy starts permissive (`strict=false`, `ignore_missing_imports=true`, `warn_return_any=true`, `warn_unused_ignores=true`, `check_untyped_defs=true`) to land the gate without a 500-finding backlog. Tighten gradually — first enable `strict-optional`, then `disallow_untyped_defs` per-module, then full `strict`. Each tightening step is its own PR.
+
+**`any` policy:** New code must not use `any` (eslint enforces `error` level). PR 4's surface scan found zero pre-existing `any` usages, so no bulk ignore-with-TODO sweep was needed.
+
+**B008 scoping:** FastAPI's `Depends()` / `Body()` default-argument pattern is the canonical reason B008 fires. Scoped via `[tool.ruff.lint.per-file-ignores]` to `routers/*.py` + `services/clerk.py` (the dependency-injection sites); B008 remains enforced globally everywhere else where it catches real mutable-default-arg bugs.
+
+**`react-hooks/exhaustive-deps`:** Surfaced as 9 pre-existing warnings on PR 4 baseline. Left as plain ESLint warnings (CI exits 0 on warnings) rather than ignore-with-TODO + issues — the rule is too noisy to justify per-warning tracking, and the right discipline is "review when next touching the file." Lint output visibility is the tracking mechanism.
+
+**Tech debt:**
+
+- **ESLint flat-config bridge:** `eslint-config-next@15` still exports in legacy `.eslintrc` format and depends on `@rushstack/eslint-patch`, which is incompatible with ESLint 9's module resolution. Bridged via `@eslint/eslintrc` `FlatCompat` shim in `frontend/eslint.config.mjs`. Remove the shim and the dep once `eslint-config-next` ships native flat-config support.
+- **Vertex SDK + google-cloud-storage stub gaps:** 4 type-ignored sites in `services/ai/gemini.py` and `services/gemini_files.py`. Each anchored to a GitHub issue (#19–#22) with the condition for dropping the ignore.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -567,5 +601,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 17, 2026 — D-020 added (branch protection on main).*
-*20 decisions logged. All decisions current as of this date.*
+*Last updated: May 17, 2026 — D-021 added (linter and formatter configs).*
+*21 decisions logged. All decisions current as of this date.*

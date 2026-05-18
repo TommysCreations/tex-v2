@@ -23,8 +23,11 @@ async def create_team(body: TeamCreate, user: dict = Depends(get_current_user)):
         conn.close()
 
     return TeamResponse(
-        id=str(row[0]), name=row[1], level=row[2],
-        created_at=row[3], updated_at=row[4],
+        id=str(row[0]),
+        name=row[1],
+        level=row[2],
+        created_at=row[3],
+        updated_at=row[4],
     )
 
 
@@ -45,8 +48,11 @@ async def list_teams(user: dict = Depends(get_current_user)):
 
     return [
         TeamResponse(
-            id=str(r[0]), name=r[1], level=r[2],
-            created_at=r[3], updated_at=r[4],
+            id=str(r[0]),
+            name=r[1],
+            level=r[2],
+            created_at=r[3],
+            updated_at=r[4],
         )
         for r in rows
     ]
@@ -70,15 +76,16 @@ async def get_team(team_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Team not found")
 
     return TeamResponse(
-        id=str(row[0]), name=row[1], level=row[2],
-        created_at=row[3], updated_at=row[4],
+        id=str(row[0]),
+        name=row[1],
+        level=row[2],
+        created_at=row[3],
+        updated_at=row[4],
     )
 
 
 @router.patch("/{team_id}", response_model=TeamResponse)
-async def update_team(
-    team_id: str, body: TeamUpdate, user: dict = Depends(get_current_user)
-):
+async def update_team(team_id: str, body: TeamUpdate, user: dict = Depends(get_current_user)):
     updates = []
     values = []
     if body.name is not None:
@@ -112,8 +119,11 @@ async def update_team(
         raise HTTPException(status_code=404, detail="Team not found")
 
     return TeamResponse(
-        id=str(row[0]), name=row[1], level=row[2],
-        created_at=row[3], updated_at=row[4],
+        id=str(row[0]),
+        name=row[1],
+        level=row[2],
+        created_at=row[3],
+        updated_at=row[4],
     )
 
 

@@ -8,8 +8,8 @@ enforced by CLAUDE.md AI PROVIDER RULES — search for 'services.ai.gemini' or
 
 import os
 
-from services.ai.base import AIVideoProvider
 from services.ai.anthropic import ClaudeProvider
+from services.ai.base import AIVideoProvider
 from services.ai.gemini import GeminiProvider
 
 

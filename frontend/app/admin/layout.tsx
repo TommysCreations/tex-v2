@@ -1,14 +1,10 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
-import { seedUser } from "@/lib/api";
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
+import { seedUser } from '@/lib/api';
 
-export default function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { getToken } = useAuth();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
@@ -17,14 +13,14 @@ export default function AdminLayout({
       const token = await getToken();
       if (!token) return;
       // In dev, ensure user row exists
-      if (process.env.NODE_ENV === "development") {
+      if (process.env.NODE_ENV === 'development') {
         await seedUser(token).catch(() => {});
       }
       // Check admin status by calling any admin route
       try {
         const res = await fetch(
-          `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001"}/admin/users`,
-          { headers: { Authorization: `Bearer ${token}` } }
+          `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8001'}/admin/users`,
+          { headers: { Authorization: `Bearer ${token}` } },
         );
         setIsAdmin(res.ok);
       } catch {
@@ -62,16 +58,10 @@ export default function AdminLayout({
           <a href="/admin" className="text-sm text-gray-400 hover:text-white">
             Corrections
           </a>
-          <a
-            href="/admin/patterns"
-            className="text-sm text-gray-400 hover:text-white"
-          >
+          <a href="/admin/patterns" className="text-sm text-gray-400 hover:text-white">
             Patterns
           </a>
-          <a
-            href="/admin/users"
-            className="text-sm text-gray-400 hover:text-white"
-          >
+          <a href="/admin/users" className="text-sm text-gray-400 hover:text-white">
             Users
           </a>
           <a href="/dashboard" className="text-sm text-gray-400 hover:text-white">

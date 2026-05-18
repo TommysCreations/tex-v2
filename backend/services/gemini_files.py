@@ -12,18 +12,19 @@ uri_expiry checks treat the URI as permanently valid.
 
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from services.rate_limit import acquire_gemini_slot
 
 
 class GeminiUploadError(Exception):
     """Raised when a video chunk upload fails."""
+
     pass
 
 
 # Far-future sentinel for GCS URIs — they do not expire.
-GCS_NEVER_EXPIRES = datetime(9999, 12, 31, tzinfo=timezone.utc)
+GCS_NEVER_EXPIRES = datetime(9999, 12, 31, tzinfo=UTC)
 
 
 def _backend() -> str:
@@ -49,14 +50,14 @@ def _upload_developer_api(local_path: str, mime_type: str) -> dict:
             config={"mime_type": mime_type},
         )
     except Exception as e:
-        raise GeminiUploadError(f"Gemini file upload failed: {e}")
+        raise GeminiUploadError(f"Gemini file upload failed: {e}") from e
 
     max_polls = 30
     for _ in range(max_polls):
         try:
             file_info = client.files.get(name=uploaded_file.name)
         except Exception as e:
-            raise GeminiUploadError(f"Failed to check Gemini file status: {e}")
+            raise GeminiUploadError(f"Failed to check Gemini file status: {e}") from e
 
         if file_info.state == "ACTIVE":
             return {
@@ -65,9 +66,7 @@ def _upload_developer_api(local_path: str, mime_type: str) -> dict:
             }
 
         if file_info.state == "FAILED":
-            raise GeminiUploadError(
-                f"Gemini file processing failed for {uploaded_file.name}"
-            )
+            raise GeminiUploadError(f"Gemini file processing failed for {uploaded_file.name}")
 
         time.sleep(10)
 
@@ -101,7 +100,8 @@ def _gcs_credentials():
 
 
 def _get_gcs_client():
-    from google.cloud import storage
+    # TODO(#19): drop type-ignore once google-cloud-storage stub resolution is fixed.
+    from google.cloud import storage  # type: ignore[attr-defined]
 
     project = os.environ["GCP_PROJECT_ID"]
     return storage.Client(project=project, credentials=_gcs_credentials())
@@ -111,7 +111,7 @@ def _parse_gs_uri(uri: str) -> tuple[str, str]:
     """Split a gs://bucket/key URI into (bucket, key)."""
     if not uri.startswith("gs://"):
         raise ValueError(f"Not a GCS URI: {uri}")
-    without_scheme = uri[len("gs://"):]
+    without_scheme = uri[len("gs://") :]
     bucket, _, key = without_scheme.partition("/")
     if not bucket or not key:
         raise ValueError(f"Malformed GCS URI: {uri}")
@@ -136,7 +136,7 @@ def _upload_vertex_gcs(local_path: str, mime_type: str) -> dict:
         blob = bucket.blob(key)
         blob.upload_from_filename(local_path, content_type=mime_type)
     except Exception as e:
-        raise GeminiUploadError(f"GCS upload failed: {e}")
+        raise GeminiUploadError(f"GCS upload failed: {e}") from e
 
     return {
         "uri": f"gs://{bucket_name}/{key}",
@@ -184,6 +184,6 @@ def _parse_expiry(file_info) -> datetime:
         exp = file_info.expiration_time
         if isinstance(exp, datetime):
             if exp.tzinfo is None:
-                return exp.replace(tzinfo=timezone.utc)
+                return exp.replace(tzinfo=UTC)
             return exp
-    return datetime.now(timezone.utc) + timedelta(hours=47)
+    return datetime.now(UTC) + timedelta(hours=47)

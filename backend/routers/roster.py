@@ -15,17 +15,22 @@ PLAYER_COLUMNS = (
 
 def _row_to_response(row) -> RosterPlayerResponse:
     return RosterPlayerResponse(
-        id=str(row[0]), team_id=str(row[1]), jersey_number=row[2],
-        full_name=row[3], position=row[4], height=row[5],
-        dominant_hand=row[6], role=row[7], notes=row[8],
-        created_at=row[9], updated_at=row[10],
+        id=str(row[0]),
+        team_id=str(row[1]),
+        jersey_number=row[2],
+        full_name=row[3],
+        position=row[4],
+        height=row[5],
+        dominant_hand=row[6],
+        role=row[7],
+        notes=row[8],
+        created_at=row[9],
+        updated_at=row[10],
     )
 
 
 @router.post("/", response_model=RosterPlayerResponse, status_code=201)
-async def create_player(
-    body: RosterPlayerCreate, user: dict = Depends(get_current_user)
-):
+async def create_player(body: RosterPlayerCreate, user: dict = Depends(get_current_user)):
     # Verify the team belongs to this user
     conn = get_connection()
     try:
@@ -45,17 +50,23 @@ async def create_player(
                     f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                     f"RETURNING {PLAYER_COLUMNS}",
                     (
-                        str(user["id"]), body.team_id, body.jersey_number,
-                        body.full_name, body.position, body.height,
-                        body.dominant_hand, body.role, body.notes,
+                        str(user["id"]),
+                        body.team_id,
+                        body.jersey_number,
+                        body.full_name,
+                        body.position,
+                        body.height,
+                        body.dominant_hand,
+                        body.role,
+                        body.notes,
                     ),
                 )
-            except UniqueViolation:
+            except UniqueViolation as err:
                 conn.rollback()
                 raise HTTPException(
                     status_code=409,
                     detail=f"Jersey number {body.jersey_number} already exists on this team",
-                )
+                ) from err
             row = cur.fetchone()
         conn.commit()
     finally:
@@ -65,9 +76,7 @@ async def create_player(
 
 
 @router.get("/", response_model=list[RosterPlayerResponse])
-async def list_players(
-    team_id: str = Query(...), user: dict = Depends(get_current_user)
-):
+async def list_players(team_id: str = Query(...), user: dict = Depends(get_current_user)):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -110,7 +119,15 @@ async def update_player(
 ):
     updates = []
     values = []
-    for field in ("jersey_number", "full_name", "position", "height", "dominant_hand", "role", "notes"):
+    for field in (
+        "jersey_number",
+        "full_name",
+        "position",
+        "height",
+        "dominant_hand",
+        "role",
+        "notes",
+    ):
         val = getattr(body, field)
         if val is not None:
             updates.append(f"{field} = %s")
@@ -132,12 +149,12 @@ async def update_player(
                     f"RETURNING {PLAYER_COLUMNS}",
                     values,
                 )
-            except UniqueViolation:
+            except UniqueViolation as err:
                 conn.rollback()
                 raise HTTPException(
                     status_code=409,
                     detail="Jersey number already exists on this team",
-                )
+                ) from err
             row = cur.fetchone()
         conn.commit()
     finally:

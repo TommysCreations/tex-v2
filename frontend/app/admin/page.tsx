@@ -1,30 +1,26 @@
-"use client";
+'use client';
 
-import { useAuth } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
-import {
-  Correction,
-  createCorrection,
-  listCorrections,
-} from "@/lib/api";
+import { useAuth } from '@clerk/nextjs';
+import { useEffect, useState } from 'react';
+import { Correction, createCorrection, listCorrections } from '@/lib/api';
 
 const SECTION_TYPES = [
-  "offensive_sets",
-  "defensive_schemes",
-  "pnr_coverage",
-  "player_pages",
-  "game_plan",
-  "adjustments_practice",
+  'offensive_sets',
+  'defensive_schemes',
+  'pnr_coverage',
+  'player_pages',
+  'game_plan',
+  'adjustments_practice',
 ];
 
 const CATEGORIES = [
-  "set_identification",
-  "player_attribution",
-  "frequency_count",
-  "tendency",
-  "coverage_type",
-  "personnel_evaluation",
-  "strategic_reasoning",
+  'set_identification',
+  'player_attribution',
+  'frequency_count',
+  'tendency',
+  'coverage_type',
+  'personnel_evaluation',
+  'strategic_reasoning',
 ];
 
 export default function AdminCorrectionsPage() {
@@ -35,23 +31,23 @@ export default function AdminCorrectionsPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Filters
-  const [filterSection, setFilterSection] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
-  const [filterCorrect, setFilterCorrect] = useState<string>("");
+  const [filterSection, setFilterSection] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterCorrect, setFilterCorrect] = useState<string>('');
 
   // New correction form
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
-    report_id: "",
-    film_id: "",
-    section_type: "offensive_sets",
-    ai_claim: "",
+    report_id: '',
+    film_id: '',
+    section_type: 'offensive_sets',
+    ai_claim: '',
     is_correct: true,
-    correct_claim: "",
-    category: "set_identification",
-    confidence: "high",
-    prompt_version: "v1.0",
-    admin_notes: "",
+    correct_claim: '',
+    category: 'set_identification',
+    confidence: 'high',
+    prompt_version: 'v1.0',
+    admin_notes: '',
   });
   const [saving, setSaving] = useState(false);
 
@@ -62,13 +58,13 @@ export default function AdminCorrectionsPage() {
       const params: Record<string, string | boolean> = {};
       if (filterSection) params.section_type = filterSection;
       if (filterCategory) params.category = filterCategory;
-      if (filterCorrect !== "") params.is_correct = filterCorrect === "true";
+      if (filterCorrect !== '') params.is_correct = filterCorrect === 'true';
       const data = await listCorrections(token, params);
       setCorrections(data.corrections);
       setTotal(data.total);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load corrections");
+      setError(e instanceof Error ? e.message : 'Failed to load corrections');
     } finally {
       setLoading(false);
     }
@@ -91,20 +87,20 @@ export default function AdminCorrectionsPage() {
       });
       setShowForm(false);
       setFormData({
-        report_id: "",
-        film_id: "",
-        section_type: "offensive_sets",
-        ai_claim: "",
+        report_id: '',
+        film_id: '',
+        section_type: 'offensive_sets',
+        ai_claim: '',
         is_correct: true,
-        correct_claim: "",
-        category: "set_identification",
-        confidence: "high",
-        prompt_version: "v1.0",
-        admin_notes: "",
+        correct_claim: '',
+        category: 'set_identification',
+        confidence: 'high',
+        prompt_version: 'v1.0',
+        admin_notes: '',
       });
       await loadCorrections();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save correction");
+      setError(e instanceof Error ? e.message : 'Failed to save correction');
     } finally {
       setSaving(false);
     }
@@ -117,21 +113,17 @@ export default function AdminCorrectionsPage() {
   return (
     <div>
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">
-          Corrections ({total})
-        </h2>
+        <h2 className="text-lg font-semibold text-white">Corrections ({total})</h2>
         <button
           onClick={() => setShowForm(!showForm)}
           className="rounded bg-brand px-3 py-1.5 text-sm font-semibold text-black hover:bg-orange-400"
         >
-          {showForm ? "Cancel" : "New Correction"}
+          {showForm ? 'Cancel' : 'New Correction'}
         </button>
       </div>
 
       {error && (
-        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">
-          {error}
-        </p>
+        <p className="mt-3 rounded bg-red-900/50 px-4 py-2 text-sm text-red-300">{error}</p>
       )}
 
       {/* New correction form */}
@@ -145,9 +137,7 @@ export default function AdminCorrectionsPage() {
               <label className="block text-xs text-gray-400">Report ID</label>
               <input
                 value={formData.report_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, report_id: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, report_id: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
                 required
               />
@@ -156,9 +146,7 @@ export default function AdminCorrectionsPage() {
               <label className="block text-xs text-gray-400">Film ID</label>
               <input
                 value={formData.film_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, film_id: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, film_id: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
                 required
               />
@@ -169,9 +157,7 @@ export default function AdminCorrectionsPage() {
               <label className="block text-xs text-gray-400">Section</label>
               <select
                 value={formData.section_type}
-                onChange={(e) =>
-                  setFormData({ ...formData, section_type: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, section_type: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
               >
                 {SECTION_TYPES.map((s) => (
@@ -185,9 +171,7 @@ export default function AdminCorrectionsPage() {
               <label className="block text-xs text-gray-400">Category</label>
               <select
                 value={formData.category}
-                onChange={(e) =>
-                  setFormData({ ...formData, category: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
               >
                 {CATEGORIES.map((c) => (
@@ -201,9 +185,7 @@ export default function AdminCorrectionsPage() {
               <label className="block text-xs text-gray-400">Confidence</label>
               <select
                 value={formData.confidence}
-                onChange={(e) =>
-                  setFormData({ ...formData, confidence: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, confidence: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
               >
                 <option value="high">High</option>
@@ -216,9 +198,7 @@ export default function AdminCorrectionsPage() {
             <label className="block text-xs text-gray-400">AI Claim</label>
             <textarea
               value={formData.ai_claim}
-              onChange={(e) =>
-                setFormData({ ...formData, ai_claim: e.target.value })
-              }
+              onChange={(e) => setFormData({ ...formData, ai_claim: e.target.value })}
               className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
               rows={2}
               required
@@ -229,9 +209,7 @@ export default function AdminCorrectionsPage() {
               <input
                 type="radio"
                 checked={formData.is_correct}
-                onChange={() =>
-                  setFormData({ ...formData, is_correct: true })
-                }
+                onChange={() => setFormData({ ...formData, is_correct: true })}
               />
               Correct
             </label>
@@ -239,23 +217,17 @@ export default function AdminCorrectionsPage() {
               <input
                 type="radio"
                 checked={!formData.is_correct}
-                onChange={() =>
-                  setFormData({ ...formData, is_correct: false })
-                }
+                onChange={() => setFormData({ ...formData, is_correct: false })}
               />
               Incorrect
             </label>
           </div>
           {!formData.is_correct && (
             <div>
-              <label className="block text-xs text-gray-400">
-                Correct Claim
-              </label>
+              <label className="block text-xs text-gray-400">Correct Claim</label>
               <textarea
                 value={formData.correct_claim}
-                onChange={(e) =>
-                  setFormData({ ...formData, correct_claim: e.target.value })
-                }
+                onChange={(e) => setFormData({ ...formData, correct_claim: e.target.value })}
                 className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
                 rows={2}
                 required
@@ -263,14 +235,10 @@ export default function AdminCorrectionsPage() {
             </div>
           )}
           <div>
-            <label className="block text-xs text-gray-400">
-              Notes (optional)
-            </label>
+            <label className="block text-xs text-gray-400">Notes (optional)</label>
             <input
               value={formData.admin_notes}
-              onChange={(e) =>
-                setFormData({ ...formData, admin_notes: e.target.value })
-              }
+              onChange={(e) => setFormData({ ...formData, admin_notes: e.target.value })}
               className="mt-1 w-full rounded border border-border bg-background px-2 py-1 text-sm text-white"
             />
           </div>
@@ -279,7 +247,7 @@ export default function AdminCorrectionsPage() {
             disabled={saving}
             className="rounded bg-brand px-4 py-1.5 text-sm font-semibold text-black hover:bg-orange-400 disabled:opacity-50"
           >
-            {saving ? "Saving..." : "Save Correction"}
+            {saving ? 'Saving...' : 'Save Correction'}
           </button>
         </form>
       )}
@@ -323,31 +291,22 @@ export default function AdminCorrectionsPage() {
 
       {/* Corrections list */}
       <div className="mt-4 space-y-2">
-        {corrections.length === 0 && (
-          <p className="text-gray-400">No corrections yet.</p>
-        )}
+        {corrections.length === 0 && <p className="text-gray-400">No corrections yet.</p>}
         {corrections.map((c) => (
-          <div
-            key={c.id}
-            className="rounded-lg border border-border bg-surface px-4 py-3"
-          >
+          <div key={c.id} className="rounded-lg border border-border bg-surface px-4 py-3">
             <div className="flex items-start justify-between">
               <div className="flex-1">
                 <p className="text-sm text-white">{c.ai_claim}</p>
                 {!c.is_correct && c.correct_claim && (
-                  <p className="mt-1 text-sm text-green-400">
-                    Correction: {c.correct_claim}
-                  </p>
+                  <p className="mt-1 text-sm text-green-400">Correction: {c.correct_claim}</p>
                 )}
               </div>
               <span
                 className={`ml-3 shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-                  c.is_correct
-                    ? "bg-green-900 text-green-300"
-                    : "bg-red-900 text-red-300"
+                  c.is_correct ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'
                 }`}
               >
-                {c.is_correct ? "Correct" : "Incorrect"}
+                {c.is_correct ? 'Correct' : 'Incorrect'}
               </span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">

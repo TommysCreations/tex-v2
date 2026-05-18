@@ -21,17 +21,17 @@ import logging
 import os
 import time
 import traceback
-from datetime import date, timezone
+from datetime import UTC, date
 
 from celery import chord, group
 from celery.exceptions import SoftTimeLimitExceeded
 
 from services.ai.router import get_ai_provider, get_fallback_provider
 from services.db import get_connection
-from services.pdf import assemble_pdf
-from services.prompts import load_prompt
-from services.prompt_versions import get_film_analysis_cache_prompt_version
 from services.gemini_files import delete_gemini_file
+from services.pdf import assemble_pdf
+from services.prompt_versions import get_film_analysis_cache_prompt_version
+from services.prompts import load_prompt
 from services.r2 import delete_from_r2, upload_bytes_to_r2
 from services.rate_limit import acquire_gemini_slot
 from services.roster_format import format_roster_for_prompt
@@ -159,6 +159,7 @@ def _try_section_cache_hit(
 # generate_report
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     bind=True,
     name="tasks.report_generation.generate_report",
@@ -180,8 +181,7 @@ def generate_report(self, report_id: str):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT user_id, team_id, status, prompt_version "
-                    "FROM reports WHERE id = %s",
+                    "SELECT user_id, team_id, status, prompt_version FROM reports WHERE id = %s",
                     (report_id,),
                 )
                 report_row = cur.fetchone()
@@ -192,8 +192,10 @@ def generate_report(self, report_id: str):
             raise RuntimeError(f"Report not found: {report_id}")
         user_id, team_id, current_status, prompt_version = report_row
         if current_status in ("complete", "partial", "error"):
-            log.info("generate_report: already terminal — skipping",
-                     extra={"report_id": report_id, "status": current_status})
+            log.info(
+                "generate_report: already terminal — skipping",
+                extra={"report_id": report_id, "status": current_status},
+            )
             return
 
         # 2. Mark processing.
@@ -201,8 +203,7 @@ def generate_report(self, report_id: str):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE reports SET status = 'processing', updated_at = now() "
-                    "WHERE id = %s",
+                    "UPDATE reports SET status = 'processing', updated_at = now() WHERE id = %s",
                     (report_id,),
                 )
             conn.commit()
@@ -238,9 +239,7 @@ def generate_report(self, report_id: str):
             conn.close()
 
         if len(film_rows) != len(film_ids):
-            raise RuntimeError(
-                f"Expected {len(film_ids)} films but found {len(film_rows)} active"
-            )
+            raise RuntimeError(f"Expected {len(film_ids)} films but found {len(film_rows)} active")
 
         not_ready = [str(r[0]) for r in film_rows if r[1] != "processed"]
         if not_ready:
@@ -341,9 +340,7 @@ def generate_report(self, report_id: str):
             # Enqueue synthesis directly — no chord, no Gemini cache.
             # Empty cache_uri is safe: the finally block in
             # run_synthesis_sections guards deletion with `if cache_uri:`.
-            run_synthesis_sections.delay(
-                None, report_id=report_id, cache_uri=""
-            )
+            run_synthesis_sections.delay(None, report_id=report_id, cache_uri="")
             return
 
         # 7. Create Gemini context cache.
@@ -362,8 +359,7 @@ def generate_report(self, report_id: str):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE reports SET context_cache_uri = %s, updated_at = now() "
-                    "WHERE id = %s",
+                    "UPDATE reports SET context_cache_uri = %s, updated_at = now() WHERE id = %s",
                     (cache_uri, report_id),
                 )
             conn.commit()
@@ -392,9 +388,7 @@ def generate_report(self, report_id: str):
             run_section.s(report_id, section_type, cache_uri, prompt_version)
             for section_type in SECTIONS_PARALLEL
         )
-        chord(chord_header)(
-            run_synthesis_sections.s(report_id=report_id, cache_uri=cache_uri)
-        )
+        chord(chord_header)(run_synthesis_sections.s(report_id=report_id, cache_uri=cache_uri))
 
         log.info(
             "generate_report: chord fired",
@@ -423,6 +417,7 @@ def generate_report(self, report_id: str):
     except Exception as exc:
         # self.retry() raises a Retry exception — let it propagate unchanged.
         from celery.exceptions import Retry
+
         if isinstance(exc, Retry):
             raise
         if self.request.retries >= self.max_retries:
@@ -437,7 +432,7 @@ def generate_report(self, report_id: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +518,7 @@ def _handle_all_sections_errored(report_id: str) -> None:
     _apply_failure_credit(user_id, report_id)
 
     from tasks.notifications import notify_coach
+
     notify_coach.delay(report_id=report_id, notification_type="report_failed_credit_applied")
 
     log.info(
@@ -712,6 +708,7 @@ def _cache_section_outputs(
 # run_synthesis_sections — chord callback (task 3.5)
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     bind=True,
     name="tasks.report_generation.run_synthesis_sections",
@@ -746,20 +743,17 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
                     (report_id,),
                 )
                 section_rows = {
-                    row[0]: {"status": row[1], "content": row[2]}
-                    for row in cur.fetchall()
+                    row[0]: {"status": row[1], "content": row[2]} for row in cur.fetchall()
                 }
         finally:
             conn.close()
 
         # 2. Count errored / completed sections from sections 1-4.
         parallel_errored = sum(
-            1 for st in SECTIONS_PARALLEL
-            if section_rows.get(st, {}).get("status") == "error"
+            1 for st in SECTIONS_PARALLEL if section_rows.get(st, {}).get("status") == "error"
         )
         parallel_complete = sum(
-            1 for st in SECTIONS_PARALLEL
-            if section_rows.get(st, {}).get("status") == "complete"
+            1 for st in SECTIONS_PARALLEL if section_rows.get(st, {}).get("status") == "complete"
         )
 
         log.info(
@@ -795,7 +789,10 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
 
         # 6. Run section 5 — Game Plan (Gemini Flash).
         game_plan_content = _run_text_section(
-            report_id, "game_plan", context, prompt_version,
+            report_id,
+            "game_plan",
+            context,
+            prompt_version,
         )
 
         # 7. Build section 6 context (sections 1-4 + section 5 if it succeeded).
@@ -806,7 +803,10 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
 
         # 8. Run section 6 — Adjustments + Practice Plan (Gemini Flash).
         _run_text_section(
-            report_id, "adjustments_practice", context_with_game_plan, prompt_version,
+            report_id,
+            "adjustments_practice",
+            context_with_game_plan,
+            prompt_version,
         )
 
         # 9. Cache sections 1-4 content in film_analysis_cache.
@@ -838,6 +838,7 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
 
     except Exception as exc:
         from celery.exceptions import Retry
+
         if isinstance(exc, Retry):
             raise
         if self.request.retries >= self.max_retries:
@@ -852,7 +853,7 @@ def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=60 * (3 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries)) from exc
 
     finally:
         # Always delete the cache — success or failure.
@@ -930,8 +931,7 @@ def _cleanup_chunks(report_id: str) -> None:
             try:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE film_chunks SET gemini_file_state = 'deleted' "
-                        "WHERE id = %s",
+                        "UPDATE film_chunks SET gemini_file_state = 'deleted' WHERE id = %s",
                         (chunk_id,),
                     )
                 conn.commit()
@@ -959,6 +959,7 @@ def _cleanup_chunks(report_id: str) -> None:
 # assemble_and_deliver — PDF assembly + R2 upload (task 3.8)
 # ---------------------------------------------------------------------------
 
+
 @celery_app.task(
     bind=True,
     name="tasks.report_generation.assemble_and_deliver",
@@ -980,8 +981,7 @@ def assemble_and_deliver(self, report_id: str):
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT user_id, team_id, status, created_at "
-                    "FROM reports WHERE id = %s",
+                    "SELECT user_id, team_id, status, created_at FROM reports WHERE id = %s",
                     (report_id,),
                 )
                 report_row = cur.fetchone()
@@ -1045,6 +1045,7 @@ def assemble_and_deliver(self, report_id: str):
             )
             _apply_failure_credit(str(user_id), report_id)
             from tasks.notifications import notify_coach
+
             notify_coach.delay(
                 report_id=report_id,
                 notification_type="report_failed_credit_applied",
@@ -1079,10 +1080,10 @@ def assemble_and_deliver(self, report_id: str):
         generation_seconds = None
         if created_at:
             from datetime import datetime
-            now = datetime.now(timezone.utc)
+
+            now = datetime.now(UTC)
             if created_at.tzinfo is None:
-                from datetime import timezone as tz
-                created_at = created_at.replace(tzinfo=tz.utc)
+                created_at = created_at.replace(tzinfo=UTC)
             generation_seconds = int((now - created_at).total_seconds())
 
         conn = get_connection()
@@ -1105,6 +1106,7 @@ def assemble_and_deliver(self, report_id: str):
 
         # 11. Notify coach.
         from tasks.notifications import notify_coach
+
         notification_type = "report_complete" if not is_partial else "report_partial"
         notify_coach.delay(
             report_id=report_id,
@@ -1139,6 +1141,7 @@ def assemble_and_deliver(self, report_id: str):
 
     except Exception as exc:
         from celery.exceptions import Retry
+
         if isinstance(exc, Retry):
             raise
         if self.request.retries >= self.max_retries:
@@ -1153,4 +1156,4 @@ def assemble_and_deliver(self, report_id: str):
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=60 * (3 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=60 * (3**self.request.retries)) from exc

@@ -12,6 +12,7 @@ import logging
 import os
 
 import anthropic
+from anthropic.types import TextBlock
 
 from services.ai.base import AIVideoProvider
 
@@ -97,11 +98,14 @@ class ClaudeProvider(AIVideoProvider):
         self.last_tokens_input = message.usage.input_tokens
         self.last_tokens_output = message.usage.output_tokens
 
-        text = message.content[0].text if message.content else ""
+        if message.content:
+            block = message.content[0]
+            assert isinstance(block, TextBlock), f"unexpected block type: {type(block)}"
+            text = block.text
+        else:
+            text = ""
         if not text.strip():
-            raise RuntimeError(
-                f"Claude returned empty content for section {section_type}"
-            )
+            raise RuntimeError(f"Claude returned empty content for section {section_type}")
 
         logger.info(
             "Claude fallback generated section",

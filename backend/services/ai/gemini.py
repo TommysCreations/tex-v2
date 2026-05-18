@@ -144,15 +144,13 @@ class GeminiProvider(AIVideoProvider):
             text_blocks.append("FULL-GAME SYNTHESIS DOCUMENT:\n" + synthesis_document)
         else:
             text_blocks.append(
-                "FULL-GAME SYNTHESIS DOCUMENT: "
-                "(not available — synthesis failed for this film)"
+                "FULL-GAME SYNTHESIS DOCUMENT: (not available — synthesis failed for this film)"
             )
         text_blocks.append("ROSTER:\n" + roster_text)
         text_context = "\n\n".join(text_blocks)
 
         logger.info(
-            "synthesis-only mode: bypassing video cache "
-            "(chunk_count=%d, text_chars=%d)",
+            "synthesis-only mode: bypassing video cache (chunk_count=%d, text_chars=%d)",
             len(chunk_uris),
             len(text_context),
         )
@@ -179,15 +177,13 @@ class GeminiProvider(AIVideoProvider):
             text_blocks.append("FULL-GAME SYNTHESIS DOCUMENT:\n" + synthesis_document)
         else:
             text_blocks.append(
-                "FULL-GAME SYNTHESIS DOCUMENT: "
-                "(not available — synthesis failed for this film)"
+                "FULL-GAME SYNTHESIS DOCUMENT: (not available — synthesis failed for this film)"
             )
         text_blocks.append("ROSTER:\n" + roster_text)
         text_context = "\n\n".join(text_blocks)
 
         logger.info(
-            "synthesis-only mode: bypassing video cache "
-            "(chunk_count=%d, text_chars=%d)",
+            "synthesis-only mode: bypassing video cache (chunk_count=%d, text_chars=%d)",
             len(chunk_uris),
             len(text_context),
         )
@@ -236,7 +232,7 @@ class GeminiProvider(AIVideoProvider):
         client = self._get_dev_client()
 
         if cache_uri.startswith(NO_CACHE_PREFIX):
-            payload = json.loads(cache_uri[len(NO_CACHE_PREFIX):])
+            payload = json.loads(cache_uri[len(NO_CACHE_PREFIX) :])
             text_context: str = payload.get("text_context", "")
             if not text_context:
                 raise RuntimeError(
@@ -275,15 +271,13 @@ class GeminiProvider(AIVideoProvider):
             raise RuntimeError(f"Gemini returned empty content for section {section_type}")
         return text
 
-    def _analyze_video_cached_vertex(
-        self, cache_uri: str, prompt: str, section_type: str
-    ) -> str:
+    def _analyze_video_cached_vertex(self, cache_uri: str, prompt: str, section_type: str) -> str:
         from vertexai.generative_models import GenerativeModel, Part
 
         self._init_vertex()
 
         if cache_uri.startswith(NO_CACHE_PREFIX):
-            payload = json.loads(cache_uri[len(NO_CACHE_PREFIX):])
+            payload = json.loads(cache_uri[len(NO_CACHE_PREFIX) :])
             text_context: str = payload.get("text_context", "")
             if not text_context:
                 raise RuntimeError(
@@ -292,7 +286,8 @@ class GeminiProvider(AIVideoProvider):
                 )
             model = GenerativeModel(GEMINI_PRO_MODEL)
             parts = [Part.from_text(text_context), Part.from_text(prompt)]
-            response = model.generate_content(parts)
+            # TODO(#20): drop type-ignore once Vertex SDK accepts Sequence[Part].
+            response = model.generate_content(parts)  # type: ignore[arg-type]
         else:
             # unreachable in synthesis-only mode — retained for future
             # re-enablement if Google caching is fixed.
@@ -300,7 +295,9 @@ class GeminiProvider(AIVideoProvider):
             from vertexai.preview.generative_models import GenerativeModel as PreviewModel
 
             cached = caching.CachedContent(cached_content_name=cache_uri)
-            model = PreviewModel.from_cached_content(cached_content=cached)
+            # TODO(#21): drop type-ignore once Vertex SDK aligns public/internal
+            # GenerativeModel types.
+            model = PreviewModel.from_cached_content(cached_content=cached)  # type: ignore[assignment]
             response = model.generate_content(prompt)
 
         usage = getattr(response, "usage_metadata", None)
@@ -331,9 +328,7 @@ class GeminiProvider(AIVideoProvider):
 
         client = self._get_dev_client()
 
-        parts = [
-            types.Part.from_uri(file_uri=u, mime_type="video/mp4") for u in uris
-        ]
+        parts = [types.Part.from_uri(file_uri=u, mime_type="video/mp4") for u in uris]
         parts.append(types.Part.from_text(text=prompt))
         contents = [types.Content(role="user", parts=parts)]
 
@@ -352,9 +347,7 @@ class GeminiProvider(AIVideoProvider):
 
         text = response.text or ""
         if not text.strip():
-            raise RuntimeError(
-                f"Gemini returned empty content for section {section_type}"
-            )
+            raise RuntimeError(f"Gemini returned empty content for section {section_type}")
         return text
 
     def _analyze_video_vertex(self, uris: list[str], prompt: str, section_type: str) -> str:
@@ -366,7 +359,8 @@ class GeminiProvider(AIVideoProvider):
         parts.append(Part.from_text(prompt))
 
         model = GenerativeModel(GEMINI_PRO_MODEL)
-        response = model.generate_content(parts)
+        # TODO(#22): drop type-ignore once Vertex SDK accepts Sequence[Part].
+        response = model.generate_content(parts)  # type: ignore[arg-type]
 
         usage = getattr(response, "usage_metadata", None)
         if usage:
@@ -378,9 +372,7 @@ class GeminiProvider(AIVideoProvider):
 
         text = response.text or ""
         if not text.strip():
-            raise RuntimeError(
-                f"Gemini returned empty content for section {section_type}"
-            )
+            raise RuntimeError(f"Gemini returned empty content for section {section_type}")
         return text
 
     # -----------------------------------------------------------------
@@ -409,7 +401,5 @@ class GeminiProvider(AIVideoProvider):
 
         text = response.text or ""
         if not text.strip():
-            raise RuntimeError(
-                f"Gemini Flash returned empty content for section {section_type}"
-            )
+            raise RuntimeError(f"Gemini Flash returned empty content for section {section_type}")
         return text

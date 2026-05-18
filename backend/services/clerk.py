@@ -1,8 +1,10 @@
 import os
 import time
+from typing import cast
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from fastapi import Depends, HTTPException, Request
 
 from services.db import get_connection
@@ -18,7 +20,7 @@ JWKS_CACHE_TTL = 3600
 async def _fetch_jwks() -> dict:
     now = time.time()
     if _jwks_cache["keys"] and (now - _jwks_cache["fetched_at"]) < JWKS_CACHE_TTL:
-        return _jwks_cache["keys"]
+        return cast(dict, _jwks_cache["keys"])
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -30,7 +32,7 @@ async def _fetch_jwks() -> dict:
     jwks_data = response.json()
     _jwks_cache["keys"] = jwks_data
     _jwks_cache["fetched_at"] = now
-    return jwks_data
+    return cast(dict, jwks_data)
 
 
 async def verify_clerk_jwt(token: str) -> dict:
@@ -53,24 +55,25 @@ async def verify_clerk_jwt(token: str) -> dict:
             _jwks_cache["keys"] = None
             jwks_data = await _fetch_jwks()
             for key_data in jwks_data.get("keys", []):
-                public_keys[key_data["kid"]] = jwt.algorithms.RSAAlgorithm.from_jwk(
-                    key_data
-                )
+                public_keys[key_data["kid"]] = jwt.algorithms.RSAAlgorithm.from_jwk(key_data)
             if kid not in public_keys:
                 raise HTTPException(status_code=401, detail="Invalid token signing key")
 
+        # JWKS endpoints by contract return public keys only; RSAAlgorithm.from_jwk's
+        # declared return is a PrivateKey | PublicKey union, which is over-broad here.
+        # See issue #24 for tracking a runtime isinstance() check at the cache-population site.
         payload = jwt.decode(
             token,
-            key=public_keys[kid],
+            key=cast(RSAPublicKey, public_keys[kid]),
             algorithms=["RS256"],
         )
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        return cast(dict, payload)
+    except jwt.ExpiredSignatureError as err:
+        raise HTTPException(status_code=401, detail="Token expired") from err
     except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
-    except httpx.HTTPError:
-        raise HTTPException(status_code=503, detail="Auth service unavailable")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {e}") from e
+    except httpx.HTTPError as err:
+        raise HTTPException(status_code=503, detail="Auth service unavailable") from err
 
 
 async def get_current_user(request: Request) -> dict:

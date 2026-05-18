@@ -30,7 +30,10 @@ def get_film_analysis_cache_prompt_version() -> str:
         log.warning(
             "chunk_extraction VERSION (%s) != chunk_synthesis VERSION (%s); "
             "preprocess key will be %s+%s",
-            v0a, v0b, v0a, v0b,
+            v0a,
+            v0b,
+            v0a,
+            v0b,
         )
         preprocess_v = f"{v0a}+{v0b}"
     else:

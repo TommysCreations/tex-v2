@@ -15,7 +15,6 @@ Per SCHEMA.md and CLAUDE.md PAYMENT RULES:
 
 from services.db import get_connection
 
-
 FREE = "free"
 CREDIT = "credit"
 STRIPE_REQUIRED = "stripe_required"
@@ -67,8 +66,7 @@ def consume_entitlement(cur, user_id: str, path: str) -> None:
     """
     if path == FREE:
         cur.execute(
-            "UPDATE users SET reports_used = reports_used + 1, updated_at = now() "
-            "WHERE id = %s",
+            "UPDATE users SET reports_used = reports_used + 1, updated_at = now() WHERE id = %s",
             (user_id,),
         )
     elif path == CREDIT:
@@ -80,13 +78,10 @@ def consume_entitlement(cur, user_id: str, path: str) -> None:
             (user_id,),
         )
         if cur.rowcount == 0:
-            raise ValueError(
-                f"User {user_id} has no credits to consume — race or stale gate check"
-            )
+            raise ValueError(f"User {user_id} has no credits to consume — race or stale gate check")
     elif path == STRIPE_REQUIRED:
         cur.execute(
-            "UPDATE users SET reports_used = reports_used + 1, updated_at = now() "
-            "WHERE id = %s",
+            "UPDATE users SET reports_used = reports_used + 1, updated_at = now() WHERE id = %s",
             (user_id,),
         )
     else:

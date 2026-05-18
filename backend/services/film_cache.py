@@ -1,7 +1,4 @@
-from typing import Optional
-
-
-def check_film_cache(file_hash: str, prompt_version: str, conn) -> Optional[dict]:
+def check_film_cache(file_hash: str, prompt_version: str, conn) -> dict | None:
     """Check film_analysis_cache for a cached result matching this hash + prompt version.
 
     Returns cached sections dict or None.

@@ -96,8 +96,7 @@ def run_section(self, report_id: str, section_type: str, cache_uri: str, prompt_
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM report_sections "
-                    "WHERE report_id = %s AND section_type = %s",
+                    "SELECT status FROM report_sections WHERE report_id = %s AND section_type = %s",
                     (report_id, section_type),
                 )
                 row = cur.fetchone()
@@ -109,8 +108,10 @@ def run_section(self, report_id: str, section_type: str, cache_uri: str, prompt_
                 f"report_sections row missing for report={report_id} section={section_type}"
             )
         if row[0] == "complete":
-            log.info("run_section: already complete — skipping",
-                     extra={"report_id": report_id, "section_type": section_type})
+            log.info(
+                "run_section: already complete — skipping",
+                extra={"report_id": report_id, "section_type": section_type},
+            )
             return
 
         # 2. Mark processing.
@@ -218,4 +219,4 @@ def run_section(self, report_id: str, section_type: str, cache_uri: str, prompt_
                 report_id=report_id,
             )
             raise
-        raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
+        raise self.retry(exc=exc, countdown=30 * (2**self.request.retries)) from exc
