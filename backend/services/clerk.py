@@ -4,6 +4,7 @@ from typing import cast
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from fastapi import Depends, HTTPException, Request
 
 from services.db import get_connection
@@ -58,9 +59,12 @@ async def verify_clerk_jwt(token: str) -> dict:
             if kid not in public_keys:
                 raise HTTPException(status_code=401, detail="Invalid token signing key")
 
+        # JWKS endpoints by contract return public keys only; RSAAlgorithm.from_jwk's
+        # declared return is a PrivateKey | PublicKey union, which is over-broad here.
+        # See issue #24 for tracking a runtime isinstance() check at the cache-population site.
         payload = jwt.decode(
             token,
-            key=public_keys[kid],
+            key=cast(RSAPublicKey, public_keys[kid]),
             algorithms=["RS256"],
         )
         return cast(dict, payload)
