@@ -1,72 +1,65 @@
 # TEX v2
 
-AI-powered basketball scouting platform. A coach uploads game film; TEX returns a master PDF scouting report.
+AI-powered basketball scouting platform. Coaches upload game film; TEX returns structured PDF scouting reports.
 
-The product loop and architectural reasoning live in the canonical docs (see [Documentation](#documentation) below). This README is the front door — read [CLAUDE.md](./CLAUDE.md) first for the full picture.
+## Status
 
-## Local development
+Early development. See `ROADMAP.md` for current phase and next milestones.
 
-### Prerequisites
+## Run locally
 
-- Docker (Mac: Docker Desktop; Linux: Docker Engine + Compose plugin)
-- Python 3.12 + `pip`
-- Node.js 22 + `npm`
+**Prerequisites:** Docker + Docker Compose, Node.js 22+, Python 3.12, a Google Cloud project with Gemini API access.
 
-### One-time setup
+### Backend
 
 ```bash
-# Backend env
 cp backend/.env.example backend/.env
-# ... fill in NEON_*, REDIS_URL, GEMINI_API_KEY, CLERK_SECRET_KEY,
-#     CLOUDFLARE_R2_*, STRIPE_SECRET_KEY, etc.
-
-# Frontend deps
-cd frontend && npm install && cd ..
-
-# Pre-commit hooks (gitleaks, ruff, mypy, eslint, prettier)
-pip install pre-commit
-pre-commit install
-
-# IMPORTANT: install backend deps locally too, otherwise mypy (via pre-commit
-# AND directly) will run under ignore_missing_imports and silently miss type
-# errors that CI catches. See D-021 for the rationale.
-pip install -r backend/requirements.txt
+# Fill in: NEON_*, GEMINI_API_KEY, CLOUDFLARE_R2_*, CLERK_*, STRIPE_*, SENTRY_DSN
+pip install -r backend/requirements.txt   # required for mypy + pre-commit to match CI
+docker compose up
 ```
 
-### Run the stack
+API runs on `http://localhost:8001`. Worker + Redis come up with the compose stack; the Postgres database is hosted on Neon (cloud), connected via `NEON_*` env vars.
+
+### Frontend
 
 ```bash
-docker compose up -d           # API + worker + Redis
-cd frontend && npm run dev     # Next.js dev server on :3000
+cp frontend/.env.example frontend/.env.local
+# Fill in: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, NEXT_PUBLIC_API_BASE_URL
+cd frontend && npm install && npm run dev
 ```
 
-API health: `curl http://localhost:8001/health` → `{"status":"ok"}`.
+Frontend runs on `http://localhost:3000`.
 
-### Run the linters / type checkers locally
+### Pre-commit hooks (recommended before pushing)
 
 ```bash
-# Backend
-cd backend && python3 -m ruff check . && python3 -m ruff format --check . && python3 -m mypy .
-
-# Frontend
-cd frontend && npm run lint && npm run format:check && npx tsc --noEmit && npm run build
+pip install pre-commit && pre-commit install
 ```
 
-CI runs the same commands against the same pinned tool versions (see [`backend/pyproject.toml`](./backend/pyproject.toml), [`frontend/package.json`](./frontend/package.json), and [`.pre-commit-config.yaml`](./.pre-commit-config.yaml)). Bump tool versions in lockstep across all three surfaces.
+First run is slow (~30–60s) because mypy installs `backend/requirements.txt` into a hook-local env. Subsequent runs are cached. See `DECISIONS.md` D-021 for the rationale.
 
 ## Documentation
 
-Read in this order:
+Start with `CLAUDE.md` for product context and working style, then `ARCHITECTURE.md` for system design, then `ROADMAP.md` for current state.
 
-1. [`CLAUDE.md`](./CLAUDE.md) — project rules, tech stack, decision protocol. Read first every session.
-2. [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system design with reasoning.
-3. [`ROADMAP.md`](./ROADMAP.md) — live progress tracker. Current phase, active task, blockers.
-4. [`DECISIONS.md`](./DECISIONS.md) — architectural decisions log. Every D-NNN with rationale.
-5. [`PRD.md`](./PRD.md), [`SCHEMA.md`](./SCHEMA.md), [`PROMPTS.md`](./PROMPTS.md), [`AGENTS.md`](./AGENTS.md), [`EVALS.md`](./EVALS.md), [`COSTS.md`](./COSTS.md), [`AI_STRATEGY.md`](./AI_STRATEGY.md), [`VISION.md`](./VISION.md), [`STACK.md`](./STACK.md), [`FLOWS.md`](./FLOWS.md), [`TRAINING.md`](./TRAINING.md), [`MCP.md`](./MCP.md) — domain-specific deep dives.
-
-## Audit & cleanup
-
-[`AUDIT_REPORT.md`](https://github.com/aidn31/tex-v2/blob/chore/repo-audit/AUDIT_REPORT.md) (on the `chore/repo-audit` branch) lists the open repo hygiene findings and which PRs have closed them.
+| Doc | Purpose |
+|---|---|
+| `CLAUDE.md` | Working style, conventions, must-read first |
+| `ARCHITECTURE.md` | System design and component map |
+| `ROADMAP.md` | Phase-by-phase progress, current milestone |
+| `STACK.md` | Technology choices and rationale |
+| `DECISIONS.md` | Numbered architectural decisions (D-001 onward) |
+| `PROMPTS.md` | Gemini prompt versioning |
+| `SCHEMA.md` | Postgres schema reference |
+| `FLOWS.md` | End-to-end request flows |
+| `EVALS.md` | Eval gates per phase |
+| `COSTS.md` | Cost model per report |
+| `PRD.md` | Product requirements |
+| `VISION.md` | Long-term direction |
+| `AGENTS.md` | RLHF training mode notes |
+| `MCP.md` | MCP server integrations |
+| `AI_STRATEGY.md` | AI/ML strategy |
 
 ## License
 
