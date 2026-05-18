@@ -1,5 +1,6 @@
 import os
 import time
+from typing import cast
 
 import httpx
 import jwt
@@ -18,7 +19,7 @@ JWKS_CACHE_TTL = 3600
 async def _fetch_jwks() -> dict:
     now = time.time()
     if _jwks_cache["keys"] and (now - _jwks_cache["fetched_at"]) < JWKS_CACHE_TTL:
-        return _jwks_cache["keys"]
+        return cast(dict, _jwks_cache["keys"])
 
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -30,7 +31,7 @@ async def _fetch_jwks() -> dict:
     jwks_data = response.json()
     _jwks_cache["keys"] = jwks_data
     _jwks_cache["fetched_at"] = now
-    return jwks_data
+    return cast(dict, jwks_data)
 
 
 async def verify_clerk_jwt(token: str) -> dict:
@@ -62,7 +63,7 @@ async def verify_clerk_jwt(token: str) -> dict:
             key=public_keys[kid],
             algorithms=["RS256"],
         )
-        return payload
+        return cast(dict, payload)
     except jwt.ExpiredSignatureError as err:
         raise HTTPException(status_code=401, detail="Token expired") from err
     except jwt.InvalidTokenError as e:

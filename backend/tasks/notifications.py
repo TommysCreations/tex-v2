@@ -61,7 +61,10 @@ def _write_dead_letter(
     acks_late=True,
 )
 def notify_coach(
-    self, report_id: str = None, film_id: str = None, notification_type: str = "report_complete"
+    self,
+    report_id: str | None = None,
+    film_id: str | None = None,
+    notification_type: str = "report_complete",
 ):
     """Write a notification row for a coach. Phase 2 stub — full implementation in Phase 3."""
     NOTIFICATION_MESSAGES = {

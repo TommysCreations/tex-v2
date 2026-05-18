@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 import stripe
 
@@ -24,4 +25,4 @@ def verify_webhook(payload: bytes, signature: str) -> dict:
     secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
     if not secret:
         raise RuntimeError("STRIPE_WEBHOOK_SECRET is not set")
-    return stripe.Webhook.construct_event(payload, signature, secret)
+    return cast(dict, stripe.Webhook.construct_event(payload, signature, secret))

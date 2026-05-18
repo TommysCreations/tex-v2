@@ -1,4 +1,5 @@
 import os
+from typing import cast
 
 import boto3
 
@@ -15,19 +16,25 @@ def get_r2_client():
 
 def generate_presigned_upload_url(bucket: str, key: str, expiry_seconds: int = 3600) -> str:
     client = get_r2_client()
-    return client.generate_presigned_url(
-        "put_object",
-        Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=expiry_seconds,
+    return cast(
+        str,
+        client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiry_seconds,
+        ),
     )
 
 
 def generate_presigned_read_url(bucket: str, key: str, expiry_seconds: int = 900) -> str:
     client = get_r2_client()
-    return client.generate_presigned_url(
-        "get_object",
-        Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=expiry_seconds,
+    return cast(
+        str,
+        client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiry_seconds,
+        ),
     )
 
 

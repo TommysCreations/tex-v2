@@ -58,11 +58,11 @@ def _write_dead_letter(
     task_args: dict,
     queue: str,
     error_message: str,
-    error_tb: str,
+    error_tb: str | None,
     retry_count: int,
-    film_id: str = None,
-    report_id: str = None,
-    user_id: str = None,
+    film_id: str | None = None,
+    report_id: str | None = None,
+    user_id: str | None = None,
 ):
     """Write a dead letter row for a task that has exhausted retries."""
     conn = get_connection()
@@ -97,7 +97,10 @@ def _write_dead_letter(
 
 
 def _update_film_status(
-    film_id: str, status: str, error_message: str = None, gemini_processing_status: str = None
+    film_id: str,
+    status: str,
+    error_message: str | None = None,
+    gemini_processing_status: str | None = None,
 ):
     """Update films.status and optionally error_message and gemini_processing_status."""
     conn = get_connection()
