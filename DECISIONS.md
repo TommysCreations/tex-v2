@@ -598,6 +598,21 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-023 — Prompts 0A/0B v1.6 documented as canonical baseline
+
+**Date:** 2026-05-19
+**Status:** Adopted
+
+**Decision:** Prompts 0A (`chunk_extraction.txt`) and 0B (`chunk_synthesis.txt`) at **`VERSION: v1.6`** are documented in PROMPTS.md as the canonical baseline for the Stage-1 commercial-readiness gate. The §STAGE 1 and §STAGE 2 fences in PROMPTS.md are re-mirrored verbatim from the `.txt` files (no more "v1.0 baseline mirror" notes). The composite cache key derivation (`{sections_v}|{preprocess_v}` from `services/prompt_versions.py`) is documented in the PROMPT VERSIONING PROTOCOL section, including the `+` join behavior when 0A and 0B diverge and the `offensive_sets.txt`-as-sentinel rule for the 6-section bundle.
+
+**Rationale:** The drift report (`docs/drift-report-2026-05-19.md`) flagged PROMPTS.md as stale on three counts: (a) version markers at v1.5 instead of v1.6, (b) mirrored bodies frozen at the v1.0 baseline (6 revisions behind), and (c) cache-key composition mechanism undocumented anywhere. The half-mirror state was the worst of both worlds — readers could copy-paste a baseline that hadn't been the production prompt for months. Documenting v1.6 as canonical and synchronizing the mirrors closes the drift; documenting the cache-key mechanism prevents future prompt edits from silently failing to invalidate stale cached work.
+
+**Tightening path:** Subsequent prompt revisions (v1.7+) must update the mirror in PROMPTS.md in the **same PR** as the `.txt` edit. Reviewers should reject any prompt-`.txt` change whose PR diff does not also touch PROMPTS.md's mirrored body. The "under redesign" language has been removed from PROMPTS.md; further post-eval iteration of Prompts 0A/0B is tracked in **GitHub Issue #28** and will be re-canonicalized in this file once the Step-6 eval threshold lands a stable version.
+
+**Reversal condition:** None for the documentation discipline itself. The specific v1.6 body is reversible — bump to v1.7+ in `.txt` files, mirror to PROMPTS.md in the same PR, log under D-NNN if the rationale is significant.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -616,5 +631,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 18, 2026 — D-022 added (repository documentation).*
-*22 decisions logged. All decisions current as of this date.*
+*Last updated: May 19, 2026 — D-023 added (Prompts 0A/0B v1.6 documented as canonical).*
+*23 decisions logged. All decisions current as of this date.*

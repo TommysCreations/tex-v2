@@ -39,6 +39,7 @@ Raw SQL only. No ORM. Read this before writing a single query.
 013_create_payments.sql
 014_create_fallback_events.sql
 015_install_pgvector.sql
+016_add_film_chunks_extraction.sql
 ```
 
 Apply with `python scripts/migrate.py`. Script tracks applied migrations in a `schema_migrations` table.
@@ -218,8 +219,13 @@ CREATE TABLE film_chunks (
   r2_chunk_key           text        NOT NULL,               -- never null. R2 is the re-upload source.
   gemini_file_uri        text,                               -- null until upload completes: files/abc123
   gemini_file_state      text        NOT NULL DEFAULT 'uploading',
-                         -- 'uploading' | 'active' | 'failed'
+                         -- 'uploading' | 'active' | 'failed' | 'deleted'
+                         -- 'deleted' is set after the Gemini file URI is deleted post-report,
+                         -- but the row is retained for audit. R2 chunk key may still be live.
   gemini_file_expires_at timestamptz,                        -- null until upload completes
+  extraction_output      text,                               -- Prompt 0A output (added migration 016). null until extract_chunk completes.
+  extraction_status      text        NOT NULL DEFAULT 'pending',
+                         -- 'pending' | 'extracting' | 'complete' | 'error' (added migration 016)
   created_at             timestamptz NOT NULL DEFAULT now(),
   UNIQUE (film_id, chunk_index)
 );
@@ -227,6 +233,8 @@ CREATE TABLE film_chunks (
 CREATE INDEX idx_film_chunks_film_id ON film_chunks(film_id);
 CREATE INDEX idx_film_chunks_expiry ON film_chunks(gemini_file_expires_at)
   WHERE gemini_file_state = 'active';
+CREATE INDEX idx_film_chunks_extraction_status ON film_chunks(film_id, extraction_status);
+  -- added migration 016: accelerates run_chunk_synthesis's "all chunks complete?" check
 ```
 
 `r2_chunk_key` is never null. The chunk file must be in R2 before this row is created.
@@ -252,6 +260,13 @@ R2 chunk files are deleted only after `reports.status = 'complete'`. Never befor
 The deletion happens inside `generate_report` task after the status update.
 There is no cleanup path in this table — rows stay until the worker deletes the R2 objects
 and then soft-deletes or leaves the rows (they are cheap storage and useful for debugging).
+
+**Prompt 0A output (added migration 016):** `extraction_output` stores the structured
+observation log produced by Prompt 0A on the chunk's Gemini file URI. `extraction_status`
+progresses `pending` → `extracting` → `complete` (or `error`). `run_chunk_synthesis` reads
+every chunk row for a film and concatenates `extraction_output` as the input to Prompt 0B.
+The `idx_film_chunks_extraction_status` index accelerates the per-film "all chunks complete?"
+check that gates the synthesis trigger.
 
 ---
 
@@ -481,6 +496,13 @@ ON CONFLICT (file_hash) DO UPDATE SET synthesis_document = EXCLUDED.synthesis_do
 -- ON CONFLICT DO UPDATE: allows synthesis_document to be backfilled if the row already exists
 ```
 
+**Placeholder convention for `sections`:** The `sections` column is `NOT NULL`, but
+`run_chunk_synthesis` runs before sections 1-4 — at synthesis time the section outputs do not
+yet exist. The synthesis writer inserts `'{}'::jsonb` as a placeholder and `run_synthesis_sections`
+later updates the row with the real section outputs once they complete. A row with
+`sections = '{}'::jsonb` and a non-null `synthesis_document` is the expected mid-pipeline state,
+not corruption.
+
 `sections` JSONB structure:
 ```json
 {
@@ -624,6 +646,13 @@ These are harmless — no report is generated, no credit consumed.
 
 Created at migration 014. Depends on: `reports`.
 
+**STATUS: reserved — writes deferred pending Phase 4 eval results.** The table exists but
+application code does not currently insert rows on Claude fallback. The eval grind for
+sections 5 and 6 will determine whether Flash+Claude survives as the section 5/6 architecture
+or whether those sections move to Gemini Pro. The decision to wire writes (or drop the table)
+is tracked in GitHub Issue #27. Treat the schema below as the design target; do not depend on
+row appearance until Issue #27 is resolved.
+
 ```sql
 CREATE TABLE fallback_events (
   id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -639,13 +668,12 @@ CREATE INDEX idx_fallback_events_report_id ON fallback_events(report_id);
 CREATE INDEX idx_fallback_events_created_at ON fallback_events(created_at DESC);
 ```
 
-Every fallback event writes here before calling Claude. Used for:
+Intended use (when wired):
 1. Datadog metric `tex.fallback.triggered` — spike signals Flash degradation
 2. Admin dashboard: how often is the fallback being used? Is Flash reliability acceptable?
 3. Audit trail: which sections in a given report used Claude vs Flash?
 
-The Datadog alert on this table: 5+ fallback events in any 1-hour window = Flash may be degraded.
-Investigate before coaches notice quality difference between Flash and Sonnet output.
+Intended alert: 5+ fallback events in any 1-hour window = Flash may be degraded.
 
 ---
 
@@ -814,6 +842,6 @@ These are absent intentionally. Do not add them without a DECISIONS.md entry.
 
 ---
 
-*Last updated: Phase 0 — Context Engineering*
+*Last updated: 2026-05-19 — migration 016 documented; `gemini_file_state = 'deleted'` enumerated; `film_analysis_cache.sections` placeholder convention noted; `fallback_events` marked reserved pending Issue #27.*
 *Schema version: v2.0.0*
 *All migrations must be applied in order. Never modify a migration applied to production.*
