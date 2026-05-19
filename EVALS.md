@@ -12,7 +12,7 @@ for the golden set (the films being graded) and `TRAINING.md` §4.5 for the inte
 grading UI (the tool that grades them). Read `ROADMAP.md` → COMMERCIAL READINESS LADDER
 Stage 1 for the commercial gate these evals must clear before TEX ships to any coach.
 
-**Canonical prompt versions under evaluation: 0A v1.6, 0B v1.6 (see PROMPTS.md).**
+**Canonical prompt versions under evaluation: 0A v1.6, 0B v1.6 (see PROMPTS.md) (tracked in Issue #28).**
 Earlier prompt versions are historical, not active. Eval scorecards keyed to older
 versions should be treated as reference, not as current pass/fail.
 

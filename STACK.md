@@ -68,7 +68,7 @@ Search              Typesense                  —             Not yet. Phase 3+
 Orchestration       LlamaIndex                 —             Not yet. Phase 3+.
 ```
 
-**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).**
+**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md) (tracked in Issue #28).**
 
 ---
 
@@ -564,7 +564,7 @@ Sections 1-4 use Pro on text input. A future Pro→Flash evaluation for those se
 an eval-harness question, not a current cost-driven switch. Synthesis-only mode (D-024)
 defines the input shape (text, not video); model choice is independent.
 
-**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).**
+**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md) (tracked in Issue #28).**
 
 ### Gemini SDK (`google-genai`)
 

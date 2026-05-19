@@ -15,7 +15,7 @@ This document is the financial ground truth for every pricing decision TEX makes
 > the text payload. This is the entire cost model below; nothing about it depends on
 > Google's caching becoming "viable again."
 
-**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).**
+**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md) (tracked in Issue #28).**
 
 ---
 

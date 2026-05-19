@@ -7,7 +7,7 @@ flows like film upload and report generation cross the frontend/backend boundary
 Read PRD.md before this. Read ARCHITECTURE.md for the report pipeline and AGENTS.md for
 the Celery task graph.
 
-**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).**
+**Canonical prompt versions: 0A v1.6, 0B v1.6 (see PROMPTS.md) (tracked in Issue #28).**
 
 ---
 
