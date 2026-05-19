@@ -123,6 +123,7 @@ tex-v2/backend/
 └── prompts/
     ├── chunk_extraction.txt # Prompt 0A — per-chunk perception (Gemini 2.5 Pro on chunk video)
     ├── chunk_synthesis.txt  # Prompt 0B — full-game synthesis (Gemini 2.5 Flash, text-in text-out)
+    │                          Canonical versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).
     ├── offensive_sets.txt
     ├── defensive_schemes.txt
     ├── pnr_coverage.txt
@@ -457,11 +458,11 @@ This is the most complex part of the system. Understand this completely.
 
 ── TASK: run_chunk_synthesis (film_processing queue) ───────────────────────────
 14. Fetches all extraction_outputs from film_chunks for this film
-    Runs Prompt 0B (chunk_synthesis, Gemini 2.5 Pro) — text-only, no video
+    Runs Prompt 0B (chunk_synthesis, Gemini 2.5 Flash) — text-only, no video
     Writes synthesis_document to film_analysis_cache
     UPDATE films SET status = 'processed'
-    If a pending report is cleared for generation (payment confirmed or free/credit path):
-    enqueue generate_report.delay(report_id)  ← see AGENTS.md for payment gate logic
+    Report generation is NOT auto-triggered here. It is initiated separately by
+    POST /reports (free/credit path) or by the Stripe webhook (paid path).
 
 15. (Cache hit path) UPDATE films SET status = 'processed'
     Cached synthesis_document and sections used at report generation — no Gemini calls needed.
@@ -623,7 +624,7 @@ A worker crashes after chunk upload and the retry runs 49 hours later. In all th
 stored URI is expired and any Gemini call using it fails. At thousands of coaches these are not
 edge cases — they are predictable consequences of growth.
 
-**R2 is the source of truth. Gemini is a temporary processing layer.**
+**R2 is the source of truth. Gemini files expire after 48 hours per Google's retention policy.**
 R2 (Cloudflare's file storage) holds the permanent copy of every chunk. Gemini borrows the file,
 analyzes it, then forgets it after 48 hours. R2 never forgets. When Gemini loses a chunk, TEX
 re-uploads it from R2. This is why chunk files are kept in R2 until report generation is confirmed
@@ -1299,9 +1300,7 @@ def run_section(report_id, section_type, cache_uri, prompt_version):
 API. It returns a `vertex:no-cache:<json>` sentinel string encoding the text payload
 sections 1-4 will receive. `analyze_video_cached()` unpacks the sentinel and sends
 `[text_context, prompt]` to Gemini 2.5 Pro. No multi-chunk video is replayed into sections
-1-4. This is the design, not a workaround — see D-024. If Google's context caching becomes
-viable for multi-chunk video again in the future, that's a future evaluation; the
-abstraction layer above means it can be revisited without rippling through the rest of TEX.
+1-4. This is the design — see D-024.
 
 **Dual-backend within Gemini (Developer API + Vertex AI).**
 

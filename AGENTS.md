@@ -19,6 +19,7 @@ QUEUE                  WORKER SERVICE          TASKS
 film_processing        tex-worker-film         process_film
                                                extract_chunk          (one per chunk, parallel — Prompt 0A)
                                                run_chunk_synthesis    (single call after all chunks — Prompt 0B)
+                                               # Canonical versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).
 report_generation      tex-worker-report       generate_report
                                                run_synthesis_sections (chord callback)
                                                assemble_and_deliver
@@ -89,32 +90,45 @@ seconds. Open → execute → close. Every time.
 ```
 TASK                       QUEUE                SOFT LIMIT   HARD LIMIT   RETRIES   BACKOFF
 ────────────────────────────────────────────────────────────────────────────────────────────
-process_film               film_processing      117 min      120 min      3         30s/60s/120s
-extract_chunk              film_processing      8 min        10 min       3         30s/60s/120s
-run_chunk_synthesis        film_processing      10 min       12 min       2         60s/180s
+process_film               film_processing      117 min      120 min      3         30s/120s/480s
+extract_chunk              film_processing      8 min        10 min       3         30s/120s/480s
+run_chunk_synthesis        film_processing      10 min       12 min       2         60s/60s
 generate_report            report_generation    25 min       30 min       3         30s/60s/120s
 run_synthesis_sections     report_generation    10 min       12 min       2         60s/180s
 assemble_and_deliver       report_generation    10 min       12 min       2         60s/180s/540s
 run_section                section_generation   8 min        10 min       3         30s/60s/120s
-notify_coach               notifications        25 sec       30 sec       3         5s/10s/20s
+notify_coach               notifications        25 sec       30 sec       3         5s/5s/5s
 ```
 
 **Backoff formulas (canonical — match code):**
 
 ```
-process_film, extract_chunk, run_section, generate_report:
+process_film, extract_chunk:
+    countdown = _backoff(retries)          # lookup table [30, 120, 480]
+    # film_processing.py::_backoff()
+
+generate_report, run_section:
     countdown = 30 * (2 ** retries)        # 30s, 60s, 120s
 
-run_chunk_synthesis, run_synthesis_sections, assemble_and_deliver:
+run_synthesis_sections, assemble_and_deliver:
     countdown = 60 * (3 ** retries)        # 60s, 180s, 540s
 
+run_chunk_synthesis:
+    countdown = 60                         # constant — does not scale by retry number
+    # film_processing.py:922: raise self.retry(exc=exc, countdown=60)
+
 notify_coach:
-    countdown = 5 * (2 ** retries)         # 5s, 10s, 20s
+    countdown = default_retry_delay = 5    # constant — no per-retry override.
+    # notifications.py:138: raise self.retry(exc=exc) from exc
 ```
 
-The exponential schedule produces forgiving backoff on the first retry (the most common
-real-world failure is a transient Gemini hiccup that clears in seconds) and progressively
-longer pauses if the issue persists.
+The schedule mixes two patterns deliberately: the four section/report tasks use exponential
+growth so a transient Gemini hiccup retries fast on attempt 1 and backs off progressively;
+the film-processing tasks use the legacy `_backoff()` lookup `[30, 120, 480]` which front-loads
+a quicker first retry but a longer second wait; and the two short-cycle tasks
+(`run_chunk_synthesis`, `notify_coach`) use a constant delay because the failure modes there
+do not benefit from growth. Either re-align all eight tasks on `2**retries` exponential or
+keep this mix — but match the code.
 
 **Soft limit:** `SoftTimeLimitExceeded` is raised inside the task. The task catches it,
 writes error status to DB, cleans up /tmp, and exits gracefully.
@@ -633,21 +647,16 @@ finally:
         try:
             provider.delete_context_cache(cache_uri)
         except Exception:
-            log.warning(f"Cache deletion failed for {cache_uri} — orphan caches must be purged manually until Issue #29 wires maintenance")
+            log.warning(f"Cache deletion failed for {cache_uri} — orphan caches must be purged manually (see ARCHITECTURE.md GEMINI FILE API INTEGRATION § Orphaned file cleanup)")
     UPDATE reports SET context_cache_uri = NULL WHERE id = {report_id}
 ```
 
 **Why the synthesis-only sentinel skips the delete call:**
 In synthesis-only mode, `create_context_cache` returns a local `vertex:no-cache:<json>`
-sentinel string. No Google CachedContent was created at report-generation time, so there's
+sentinel string. No Google CachedContent is created at report-generation time, so there is
 nothing to delete on cleanup. The conditional check on the prefix avoids a no-op call (and
 the warning log) on every report. The section-cache-short-circuit path passes `cache_uri=""`
 for the same reason.
-
-If/when Google's context caching becomes viable again and `create_context_cache` resumes
-calling the real CachedContent API, the `finally` block above is what guarantees the cache
-gets cleaned up on every exit path — normal completion, partial failure, full failure,
-unhandled exception, and retry.
 
 **`_run_text_section` with Flash → Claude fallback:**
 
