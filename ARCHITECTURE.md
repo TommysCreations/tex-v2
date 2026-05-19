@@ -73,32 +73,57 @@ Entry point for all browser → server communication.
 tex-v2/backend/
 ├── main.py                  # FastAPI app, router registration, lifespan events
 ├── routers/
-│   ├── films.py             # POST /films/upload-url, POST /films, GET /films/{id}
-│   ├── reports.py           # POST /reports, GET /reports/{id}, GET /reports/{id}/sections
+│   ├── films.py             # POST /films/upload-initiate, POST /films/upload-complete,
+│   │                          POST /films/upload-abort, GET /films/{id}, POST /films/{id}/retry
+│   ├── reports.py           # POST /reports, GET /reports/{id}
 │   ├── teams.py             # CRUD for teams
 │   ├── roster.py            # CRUD for roster_players
-│   ├── webhooks.py          # Stripe webhook handler
-│   └── admin.py             # Training mode endpoints — is_admin gate on every route
+│   ├── webhooks.py          # Clerk Svix webhooks (user.created, user.deleted)
+│   ├── stripe.py            # POST /stripe/create-checkout-session, POST /stripe/webhook
+│   ├── notifications.py     # GET /notifications, POST /notifications/{id}/read
+│   ├── admin.py             # Training mode endpoints — is_admin gate on every route
+│   └── dev.py               # POST /dev/seed-user — local-dev Clerk-webhook stand-in (gated)
 ├── services/
 │   ├── db.py                # get_connection() — fresh psycopg2 connection per call
-│   ├── r2.py                # generate_presigned_upload_url(), generate_presigned_read_url()
-│   ├── ffmpeg.py            # split_film_into_chunks(), get_duration(), compress_for_upload()
-│   ├── pdf.py               # assemble_pdf() — takes all 6 sections, returns bytes
-│   ├── clerk.py             # verify_clerk_jwt(), extract_clerk_id()
+│   ├── r2.py                # generate_presigned_upload_url(), generate_presigned_read_url(),
+│   │                          upload_to_r2(), download_from_r2(), delete_from_r2()
+│   ├── ffmpeg.py            # compress_film(), split_film()
+│   ├── ffprobe.py           # validate_film_file(), get_duration() — FFprobe (Layer 3 validation)
+│   ├── pdf.py               # assemble_pdf() — takes all 6 sections, returns bytes.
+│   │                          HTML is built inline; the only template file is templates/report.css.
+│   ├── clerk.py             # verify_clerk_jwt(), get_current_user(), require_admin()
+│   ├── stripe_client.py     # configure_stripe(), verify_webhook()
+│   ├── payment_gate.py      # check_payment_gate(), consume_entitlement() — free/credit/stripe
+│   ├── gemini_files.py      # upload_to_gemini(), delete_gemini_file() —
+│   │                          dual-backend (Developer API + Vertex / GCS) per GEMINI_BACKEND
+│   ├── uri_expiry.py        # get_valid_chunk_uris() — re-upload from R2 if expiry < 1h.
+│   │                          Vertex backend short-circuits — GCS URIs do not expire.
+│   ├── rate_limit.py        # acquire_gemini_slot() — Redis token bucket per model
+│   ├── prompts.py           # load_prompt() — VERSION header + --- delimiter loader
+│   ├── prompt_versions.py   # get_film_analysis_cache_prompt_version() — composite key derivation
+│   ├── roster_format.py     # format_roster_for_prompt(team_id) — roster injected into Prompt 0A
+│   ├── film_cache.py        # film_analysis_cache lookup helpers
 │   └── ai/                  # AI provider abstraction — see AI PROVIDER ABSTRACTION section
-│       ├── base.py          # provider interface
-│       ├── gemini.py        # Gemini implementation
-│       ├── anthropic.py     # Claude fallback for sections 5-6
-│       ├── openai.py        # stub
-│       └── router.py        # get_ai_provider() — only import point for rest of codebase
+│       ├── base.py          # AIVideoProvider interface
+│       ├── gemini.py        # Gemini 2.5 Pro + 2.5 Flash (synthesis-only sentinel cache)
+│       ├── anthropic.py     # Claude 3.5 Sonnet fallback for sections 5-6 (analyze_text only)
+│       └── router.py        # get_ai_provider() / get_fallback_provider() — only import point
 ├── tasks/
-│   ├── celery_app.py        # Celery app instance, queue definitions, Redis broker config
-│   ├── film_processing.py   # process_film task — FFmpeg → Gemini File API → chunk analysis
-│   ├── report_generation.py # generate_report task — 6 prompts → PDF → R2
+│   ├── celery_app.py        # Celery app instance, queue definitions, Redis broker config,
+│   │                          worker_ready startup recovery, broker_transport_options
+│   ├── film_processing.py   # process_film, extract_chunk, run_chunk_synthesis
+│   ├── report_generation.py # generate_report, run_synthesis_sections, assemble_and_deliver
+│   ├── section_generation.py# run_section (sections 1-4, parallel)
 │   └── notifications.py     # notify_coach task — writes notification row to DB
 ├── models/
 │   └── schemas.py           # Pydantic models for all request/response bodies
+├── templates/
+│   └── report.css           # WeasyPrint print stylesheet. HTML is built inline in services/pdf.py.
+├── migrations/              # 001-016. See SCHEMA.md.
 └── prompts/
+    ├── chunk_extraction.txt # Prompt 0A — per-chunk perception (Gemini 2.5 Pro on chunk video)
+    ├── chunk_synthesis.txt  # Prompt 0B — full-game synthesis (Gemini 2.5 Flash, text-in text-out)
+    │                          Canonical versions: 0A v1.6, 0B v1.6 (see PROMPTS.md).
     ├── offensive_sets.txt
     ├── defensive_schemes.txt
     ├── pnr_coverage.txt
@@ -106,6 +131,12 @@ tex-v2/backend/
     ├── game_plan.txt
     └── adjustments_practice.txt
 ```
+
+**Note on Sentry/Datadog/PostHog:** The Sentry, Datadog (`ddtrace`), and PostHog dependencies are
+listed in `requirements.txt` and have environment variables reserved, but **no code currently
+initializes any of these**. Observability wiring is deferred to Phase 5 production hardening —
+tracked in **GitHub Issue #29**. Any reference below to "Sentry context," `tex.*` Datadog metrics,
+or PostHog events describes the intended target, not the current implementation.
 
 FastAPI validates all incoming request bodies with Pydantic. No raw dict access in route handlers.
 All authentication is JWT-based via Clerk. Every protected route calls `verify_clerk_jwt()` first.
@@ -186,15 +217,16 @@ cleans up /tmp, then exits. Graceful death.
 @celery_app.task(
     bind=True,
     max_retries=3,
-    soft_time_limit=3300,   # 55 min — begin cleanup
-    time_limit=3600,        # 60 min — hard kill
+    soft_time_limit=7000,   # ~117 min — begin cleanup
+    time_limit=7200,        # 120 min — hard kill
+    acks_late=True,
 )
 def process_film(self, film_id: str):
     tmp_files = []
     try:
         # ... processing work
     except SoftTimeLimitExceeded:
-        update_film_status(film_id, "error", "Processing timed out")
+        update_film_status(film_id, "error", "Processing timed out after 120 minutes")
         raise
     finally:
         for path in tmp_files:  # always runs — see /TMP CLEANUP section
@@ -205,13 +237,41 @@ def process_film(self, film_id: str):
 ```
 Queue                 soft_time_limit   time_limit   reason
 ─────────────────────────────────────────────────────────────────────
-film_processing       55 min            60 min       FFmpeg + 5 chunk uploads
-report_generation     25 min            30 min       6 Gemini calls, parallel chord
+film_processing       117 min           120 min      FFmpeg compress (slow on emulated Docker)
+                                                     + chunk uploads + Prompt 0A on each chunk
+report_generation     25 min            30 min       orchestrator only — fires chord, returns
+section_generation    8 min             10 min       individual section prompt — Gemini 2.5 Pro
 notifications         25 sec            30 sec       single DB write — 30s means DB is broken
 ```
 
+**Why 120 minutes for film_processing:** FFmpeg's H.264 re-encode is ~10x slower in Docker for Mac
+(no hardware acceleration in the Linux VM) than native, and the same Docker behavior shows up in
+some Cloud Run configurations. A 2-hour 1080p film can spend 40+ minutes on compression alone,
+followed by chunk uploads and Prompt 0A extraction on each chunk. 120 minutes is the empirically-
+tuned ceiling that catches genuinely-stuck tasks without false-positive-killing slow-but-progressing
+ones. The trade-off vs the previous 60-minute limit is documented in DECISIONS.md (D-026).
+
 The notification timeout being 30 seconds is deliberate. A single DB insert taking that long
 signals a broken connection, not a slow task. Surface it immediately.
+
+**Celery app configuration (per `tasks/celery_app.py`):**
+
+```python
+task_acks_late = True             # ack after the task completes — not on receipt.
+                                  # A worker crash mid-task re-delivers to another worker.
+worker_prefetch_multiplier = 1    # fetch one task at a time — fair distribution.
+                                  # Critical for long film tasks: a worker that prefetches
+                                  # 4 tasks holds 3 hostage while the first 2-hour film runs.
+broker_transport_options = {
+    "visibility_timeout": 10800,  # 3 hours. Must exceed the longest hard time_limit
+                                  # (process_film at 7200s) so Redis doesn't redeliver
+                                  # a still-running task to a second worker.
+}
+task_default_queue = "notifications"   # uncategorized tasks land here, never in a heavy queue.
+```
+
+These are reliability tunings, not performance knobs. Changing any of them changes the failure
+mode of the entire pipeline.
 
 **Dead letter queue — failed tasks are never silently lost.**
 
@@ -326,8 +386,9 @@ def recover_stuck_jobs():
     duplicate processing.
     """
     with get_connection() as conn:
-        # films stuck in processing for more than 2 hours
-        # (2x the 60-minute hard timeout — definitely stuck, not just slow)
+        # films stuck in processing — the 2-hour threshold matches the hard timeout.
+        # A genuinely-progressing task that hits this window has already been killed
+        # by Celery's time_limit, so re-enqueuing is correct.
         stuck_films = conn.execute("""
             SELECT id FROM films
             WHERE status = 'processing'
@@ -397,11 +458,11 @@ This is the most complex part of the system. Understand this completely.
 
 ── TASK: run_chunk_synthesis (film_processing queue) ───────────────────────────
 14. Fetches all extraction_outputs from film_chunks for this film
-    Runs Prompt 0B (chunk_synthesis, Gemini 2.5 Pro) — text-only, no video
+    Runs Prompt 0B (chunk_synthesis, Gemini 2.5 Flash) — text-only, no video
     Writes synthesis_document to film_analysis_cache
     UPDATE films SET status = 'processed'
-    If a pending report is cleared for generation (payment confirmed or free/credit path):
-    enqueue generate_report.delay(report_id)  ← see AGENTS.md for payment gate logic
+    Report generation is NOT auto-triggered here. It is initiated separately by
+    POST /reports (free/credit path) or by the Stripe webhook (paid path).
 
 15. (Cache hit path) UPDATE films SET status = 'processed'
     Cached synthesis_document and sections used at report generation — no Gemini calls needed.
@@ -563,7 +624,7 @@ A worker crashes after chunk upload and the retry runs 49 hours later. In all th
 stored URI is expired and any Gemini call using it fails. At thousands of coaches these are not
 edge cases — they are predictable consequences of growth.
 
-**R2 is the source of truth. Gemini is a temporary processing layer.**
+**R2 is the source of truth. Gemini files expire after 48 hours per Google's retention policy.**
 R2 (Cloudflare's file storage) holds the permanent copy of every chunk. Gemini borrows the file,
 analyzes it, then forgets it after 48 hours. R2 never forgets. When Gemini loses a chunk, TEX
 re-uploads it from R2. This is why chunk files are kept in R2 until report generation is confirmed
@@ -683,51 +744,108 @@ Without the film_id prefix, two concurrent tasks writing `chunk_001.mp4` overwri
 
 ## REPORT GENERATION PIPELINE
 
-**Implementation note (2026-05-14):** The numbered flow below was written for the **original** design: **Gemini Context Caching** over **chunk File-API URIs**, with sections 1–4 reading **video** from a shared cache handle. **Current code** uses **synthesis-only mode (Option 3)** in **`services/ai/gemini.py`**: **`create_context_cache()`** returns a **sentinel** encoding **`synthesis_document` + roster** (text). Sections **1–4** call **`analyze_video_cached()`**, which sends **[text context, prompt]** to **Gemini 2.5 Pro** — **no** multi-chunk video payload on that path. **Prompt 0A** still uses File API per chunk during **`extract_chunk`**. When Google’s cache API is viable again, the diagram can be re-aligned; until then, treat **`gemini.py`** as source of truth.
+TEX runs **synthesis-only mode** for sections 1-4: the section prompts read the
+`synthesis_document` produced by Prompt 0B as **text context**, not the raw chunk video.
+This is the canonical architecture. The `services/ai/gemini.py::create_context_cache()`
+function returns a `vertex:no-cache:<json>` sentinel that bundles the synthesis document
+and roster as text Parts — no Google CachedContent is created, no chunk video is replayed
+into sections 1-4. Chunk video is consumed exactly once in the pipeline, during Prompt 0A
+(`extract_chunk`). See D-024.
 
 ```
-1. generate_report task receives report_id
+1. generate_report receives report_id
 2. Fetch report + associated film_ids + roster from DB
-3. Call get_valid_chunk_uris() — re-uploads any expired Gemini URIs from R2
-4. Create context cache from chunk URIs + roster (orchestrator, before chord fires)
-5. Fire Celery chord — sections 1-4 run in PARALLEL:
-   Section 1: offensive_sets      — input: cache URI
-   Section 2: defensive_schemes   — input: cache URI
-   Section 3: pnr_coverage        — input: cache URI
-   Section 4: player_pages        — input: cache URI
-   Each section saves to report_sections immediately on completion.
-6. Chord callback fires when all 4 complete — run_synthesis_sections:
-   Section 5: game_plan           — input: sections 1-4 text (no video)
-   Section 6: adjustments_practice — input: sections 1-5 text (no video)
-7. Delete context cache from Gemini
-8. Write sections 1-4 to film_analysis_cache (keyed by film hash)
-9. assemble_pdf() → upload PDF to R2 → save pdf_r2_key to reports
-10. Delete R2 chunks (report is now confirmed complete)
-11. Delete Gemini file URIs
-12. Update reports.status = complete
-13. Enqueue notify_coach task
+3. Verify all films have status = 'processed'. If any film is still 'processing',
+   self.retry(countdown=60) — film may still be running synthesis.
+4. Section-cache short-circuit check:
+   For a single-film report, check film_analysis_cache.sections at the current
+   composite prompt_version (see PROMPTS.md). If present, mark sections 1-4 in
+   report_sections with model_used='cached', and skip directly to step 9 with
+   cache_uri="". (See SECTION-CACHE SHORT-CIRCUIT below.)
+5. Call get_valid_chunk_uris() for each film. Developer-API path re-uploads any
+   chunks whose Gemini URIs expire within 1 hour. Vertex/GCS path is a no-op —
+   GCS URIs do not expire.
+6. Fetch synthesis_document from film_analysis_cache for each film.
+7. Build the synthesis-only context: synthesis_document(s) + formatted roster text.
+   gemini.py's create_context_cache() wraps this into the vertex:no-cache:<json>
+   sentinel. No CachedContent is created on Google's side. The "cache_uri" passed
+   downstream is the sentinel string.
+8. INSERT INTO report_sections for all 6 sections (status='pending'),
+   ON CONFLICT (report_id, section_type) DO UPDATE SET status='pending'.
+9. Fire Celery chord — sections 1-4 run in PARALLEL on section_generation queue:
+   Section 1: offensive_sets      — input: synthesis text + roster
+   Section 2: defensive_schemes   — input: synthesis text + roster
+   Section 3: pnr_coverage        — input: synthesis text + roster
+   Section 4: player_pages        — input: synthesis text + roster
+   Each calls provider.analyze_video_cached(cache_uri, prompt, section_type), which
+   in synthesis-only mode unpacks the sentinel and sends [text_context, prompt]
+   to Gemini 2.5 Pro. No multi-chunk video is replayed.
+10. Chord callback fires when all 4 reach a terminal state — run_synthesis_sections:
+    - Counts errored sections 1-4.
+    - If all 4 errored: mark report 'error', apply failure credit, notify coach, return.
+    - Otherwise: builds text context from completed sections 1-4 and runs sections 5-6
+      sequentially. Section 6 receives section 5 output appended to the context.
+    - Section 5: game_plan           — Gemini 2.5 Flash (Claude 3.5 Sonnet fallback)
+    - Section 6: adjustments_practice — Gemini 2.5 Flash (Claude 3.5 Sonnet fallback)
+11. Write completed sections 1-4 back to film_analysis_cache.sections (jsonb).
+    Future reports on the same film at the same prompt_version short-circuit at step 4.
+12. Enqueue assemble_and_deliver(report_id).
+13. assemble_and_deliver:
+    - assemble_pdf() (HTML built inline in services/pdf.py + templates/report.css)
+    - Upload PDF to R2 at reports/{user_id}/{report_id}/scouting_report.pdf
+    - UPDATE reports SET status='complete' (or 'partial' if 1-5 sections errored),
+      pdf_r2_key, completed_at, generation_time_seconds.
+    - Delete Gemini file URIs (each chunk).
+    - Delete R2 chunk files. Only after reports.status is written terminal.
+    - Enqueue notify_coach (type='report_complete' or 'report_partial').
 ```
 
 **Sections 1-4 run in parallel. Sections 5-6 run sequentially after.**
-Sections 1-4 are independent — same input, no dependency on each other. The Celery chord
-fires all 4 simultaneously. The chord callback triggers sections 5-6 only after all 4 complete.
-Section 6 depends on section 5 output, so 5 and 6 are sequential within the callback.
+Sections 1-4 are independent — same text context, no dependency on each other. The chord
+fires all 4 simultaneously. The chord callback runs sections 5-6 sequentially because
+section 6 receives section 5's output as context.
 
-**Context cache is created once by the orchestrator before the chord fires.**
-Not by section 1. All 4 parallel sections receive the same cache URI as input. This is
-what allows simultaneity — no section waits for another to create shared resources.
+**Synthesis document creation happens once per film, not per report.**
+`run_chunk_synthesis` writes `film_analysis_cache.synthesis_document` after all chunks
+finish Prompt 0A extraction. The same synthesis document is reused for every report
+generated against that film — cached and looked up by `file_hash` + composite
+`prompt_version` (see PROMPTS.md).
 
-**What happens when a multi-film report runs?**
-If a coach selects 3 films for one report, the context cache includes chunk URIs from
-all 3 films. Gemini receives context for all films in a single cache. The prompt instructs
-Gemini to synthesize patterns across games, not summarize each game separately.
+**Multi-film reports** concatenate the per-film synthesis documents into the text context.
+No Google CachedContent is created. Each film's synthesis document is independent text;
+the section prompts are responsible for reasoning across them.
+
+### SECTION-CACHE SHORT-CIRCUIT
+
+Beyond the per-film synthesis cache, TEX maintains a second cache layer at the section
+level. `film_analysis_cache.sections` (jsonb) stores the four section outputs after they
+complete. When a coach regenerates a report against the same film at the same composite
+prompt_version, `generate_report` skips the section_generation chord entirely:
+
+```
+- Sections 1-4 are read from film_analysis_cache.sections
+- report_sections rows are written with model_used='cached', tokens_*=0, time=0
+- run_synthesis_sections is invoked directly with chord_results=None and cache_uri=""
+- Sections 5-6 still run (they depend on this report's coach/roster/intent and are
+  not cached at the section level)
+```
+
+This makes report regeneration cheap for unchanged films at unchanged prompts — the
+dominant cost (Prompt 0A on chunk video, plus 4 sections-1-4 calls on Gemini 2.5 Pro)
+is paid once and amortized across all subsequent regenerations.
 
 **Error recovery at section level:**
-If one section fails after 3 retries, it writes `status: error` to report_sections. The
+If one section fails after 3 retries, it writes `status='error'` to report_sections. The
 chord callback still fires — Celery chords proceed when all tasks complete regardless of
-individual success or failure. The callback checks section statuses and generates the best
-possible partial report, clearly indicating which section failed. A 5/6 partial report is
-more useful to a coach than a total failure.
+individual success or failure. The callback runs sections 5-6 against whatever 1-4 produced;
+`assemble_and_deliver` then assembles a partial report. If `error_count == 6`, the report
+is marked `error` and a failure credit is applied. Otherwise the report is `partial` if any
+section errored, or `complete` if none did. A 5/6 partial report is more useful to a coach
+than a total failure.
+
+**`reports.status='partial'`** is a real terminal state, not just a concept. The PDF is
+delivered, the notification fires (`type='report_partial'`), and no credit is applied —
+the coach received something usable. Only `error_count == 6` triggers the credit path.
 
 ---
 
@@ -736,34 +854,60 @@ more useful to a coach than a total failure.
 **Why Gemini File API instead of base64 inline?**
 A 20-minute H.264 chunk at 720p is approximately 400-800MB. Inlining that as base64 in a JSON request
 body is infeasible. The File API uploads the file once and references it by URI in subsequent requests.
-Files persist for 48 hours. TEX deletes them after report generation is confirmed complete.
+Files persist for 48 hours on the Developer API backend. TEX deletes them after report generation
+is confirmed complete.
+
+**Chunk video is consumed exactly once — during Prompt 0A.**
+Sections 1-4 do not read chunk video. They read the synthesis document Prompt 0B produced.
+The Gemini File API URIs (or GCS URIs on the Vertex backend) are referenced only by
+`extract_chunk` to run Prompt 0A on each chunk's video.
 
 **File lifecycle:**
 ```
-upload chunk (worker) → poll until state=ACTIVE → create context cache from URIs
-→ run 4 parallel section prompts using cache → delete context cache
-→ report confirmed complete → delete chunk file URIs → delete R2 chunks
+upload chunk (worker)                          — gemini_files.py
+→ poll until state=ACTIVE                      — gemini_files.py
+→ run Prompt 0A on chunk URI                   — extract_chunk task
+→ Prompt 0B synthesizes all extraction outputs — run_chunk_synthesis task (text-only, no video)
+→ sections 1-4 read synthesis_document         — section_generation, no video re-read
+→ report confirmed complete (assemble_and_deliver)
+   → delete Gemini file URIs (per chunk)
+   → delete R2 chunks
 ```
 
-**Context cache sits on top of file URIs:**
-The Gemini context cache is created from the chunk URIs. It is the cached representation of
-the video content that all 4 sections share. The context cache is deleted immediately after
-sections 1-4 complete (step 20 in the pipeline). The underlying file URIs are deleted after
-the full report is confirmed complete (step 25). R2 chunks are deleted last (step 24).
+**5-minute HTTP timeout on the Gemini SDK is mandatory.**
+The default `google-genai` HTTP client timeout (~60s) is too short for Prompt 0A on long
+chunks. Without the override, `RemoteDisconnected('Remote end closed connection without
+response')` burns retries silently. `services/ai/gemini.py::_get_dev_client()` passes
+`http_options=types.HttpOptions(timeout=300_000)` (5 minutes in milliseconds) on
+`genai.Client()`. Do not remove this override.
+
+**Dual-backend support (Developer API + Vertex AI / GCS).**
+The Gemini provider switches on `GEMINI_BACKEND`:
+
+```
+GEMINI_BACKEND=developer_api   → Gemini File API (48-hour expiry, expiry-aware re-upload from R2)
+GEMINI_BACKEND=vertex          → Vertex AI + GCS storage (no expiry, no re-upload scan)
+```
+
+Both backends are wired and tested. On Vertex, `services/uri_expiry.py::get_valid_chunk_uris`
+short-circuits — GCS URIs never expire. `services/gemini_files.py` uploads to either Gemini
+File API or `gs://tex-film-chunks-{env}/chunks/{film_id}/{filename}` depending on the env var.
+The rest of TEX never sees this distinction — it calls `provider.analyze_video_cached()`
+regardless. See D-018 for the Vertex migration history.
 
 **Deletion order matters:**
 ```
-1. Context cache deleted (after sections 1-4 complete) — frees Gemini cache storage
-2. Gemini file URIs deleted (after full report complete) — frees Gemini file storage
-3. R2 chunks deleted (after full report complete) — frees R2 storage
+1. Gemini / GCS file URIs deleted (after full report complete) — frees Gemini/GCS storage
+2. R2 chunks deleted (after full report complete) — frees R2 storage
 ```
 Never delete R2 chunks before the report is confirmed complete. R2 is the re-upload source
-if a Gemini URI expires or a file needs to be reprocessed.
+if a Gemini File API URI expires on the Developer-API backend.
 
-**Orphaned file cleanup:**
-A daily maintenance task calls `files.list` and deletes any Gemini files older than 24 hours
-that are not referenced in an active report. This catches files from crashed workers that
-died before cleanup ran.
+**Orphaned file cleanup — not yet implemented.**
+A daily maintenance task (planned: list Gemini files older than 24 hours not referenced by
+an active report; delete them) is described in the design but **not built**. Files from
+crashed workers that died before cleanup ran accumulate until manually purged. Tracked for
+Phase 5 production hardening (Issue #29 catch-all for observability + maintenance gaps).
 
 ---
 
@@ -780,8 +924,15 @@ FastAPI → use users.id for all DB queries
 ```
 
 Clerk webhooks (user.created, user.deleted) hit `POST /webhooks/clerk`.
+Stripe webhooks hit `POST /stripe/webhook` (the Stripe router is mounted under `/stripe`,
+not under `/webhooks`).
 On `user.created`: insert into users. On `user.deleted`: set users.deleted_at.
-Webhook handler verifies Svix signature before processing. Never trust unsigned webhooks.
+Webhook handlers verify the Svix (Clerk) or Stripe signature before processing.
+Never trust unsigned webhooks.
+
+In local dev, Clerk's outbound webhook is unreliable through ngrok, so `POST /dev/seed-user`
+(in `routers/dev.py`) acts as a manual stand-in — the dashboard and admin layout call it
+on mount in development mode to ensure the local user row exists.
 
 Admin routes additionally check: `SELECT is_admin FROM users WHERE id = {user_id}`.
 If `is_admin = false`, return 403 immediately. The is_admin check is in the route handler, not
@@ -831,8 +982,9 @@ PDF section order (matches v1):
 6. Game Plan
 7. In-Game Adjustments + Practice Plan
 
-The HTML template lives at `backend/templates/report.html`. Tailwind CSS is not used here —
-WeasyPrint requires static CSS. Use a purpose-built print stylesheet.
+The HTML is built **inline** in `services/pdf.py::_build_html()` — there is no `report.html`
+template file. The only template asset on disk is `backend/templates/report.css`, the
+WeasyPrint print stylesheet. Tailwind CSS is not used here — WeasyPrint requires static CSS.
 Typography: clean, high-contrast, print-optimized. This PDF is printed and used on a clipboard.
 
 ---
@@ -845,34 +997,47 @@ The frontend is a thin client. It renders state, collects input, and calls the F
 tex-v2/frontend/
 ├── app/
 │   ├── (auth)/              # Clerk login/signup pages
-│   ├── dashboard/           # Coach's home: teams, recent reports
-│   ├── teams/[id]/          # Team page: roster, films, reports
-│   ├── reports/[id]/        # Report status + PDF download
-│   ├── upload/              # Film upload flow
-│   └── admin/               # Training mode — is_admin gate
-├── components/
-│   ├── upload/              # Presigned URL upload logic + progress bar
-│   ├── report/              # Report status polling + section previews
-│   └── ui/                  # Shared primitives: buttons, cards, modals
+│   ├── dashboard/           # Coach's home: teams, recent films, notifications inline
+│   ├── teams/[id]/          # Team page: roster, films, reports (tabs)
+│   ├── reports/[id]/        # Report status + PDF download (polls every 10s)
+│   ├── upload/              # Film upload flow — single presigned PUT to R2
+│   └── admin/               # Training mode pages. /admin = corrections, /admin/patterns,
+│                             # /admin/users. is_admin probed on layout mount.
 ├── lib/
-│   ├── api.ts               # Typed fetch wrappers for every FastAPI endpoint
-│   └── clerk.ts             # Auth helpers
+│   └── api.ts               # Typed fetch wrappers for every FastAPI endpoint
 └── middleware.ts             # Clerk auth gate on all routes except (auth)
 ```
 
-**Polling pattern for job status:**
-The frontend polls `GET /reports/{id}` every 5 seconds while `status` is `processing`.
-When status becomes `complete` or `error`, polling stops. No WebSockets in v2.0.
-WebSockets add operational complexity (persistent connections, reconnect logic) that is not
-justified when a report takes 15-45 minutes. A coach will check back, not stare at a spinner.
+The frontend is page-level only — no shared `components/` library has been built yet, and no
+separate `lib/clerk.ts` is needed (the typed wrappers in `lib/api.ts` are all that's required).
+Clerk provides `<SignIn>` / `<SignUp>` components used directly in the `(auth)` pages.
 
-**Film upload (multipart — required for files up to 10GB):**
-1. Frontend calls `POST /films/upload-initiate` → gets `{ film_id, upload_id, r2_key, part_urls }`
-2. Frontend uploads each 100MB part sequentially via PUT to each presigned part URL, collecting ETags
-3. On all parts complete, frontend calls `POST /films/upload-complete` with `{ film_id, upload_id, parts }`
-4. Backend completes R2 multipart upload, writes film record, enqueues process_film task
-5. On any part failure, frontend calls `POST /films/upload-abort` to prevent orphaned R2 parts
-See PRD.md §1.4 for full route specs, part size rationale, and browser upload code.
+**Polling pattern for job status:**
+The report status page polls `GET /reports/{id}` every 10 seconds while `status` is
+non-terminal. When status becomes `complete`, `partial`, or `error`, polling stops. The
+team page polls film status on a similar cadence. No WebSockets in v2.0 — operational
+complexity (persistent connections, reconnect logic) is not justified when a report takes
+15-45 minutes. A coach will check back, not stare at a spinner.
+
+**Film upload — single presigned PUT to R2.**
+The current upload flow is a single PUT, not a multipart upload. Multipart support was
+described in the original design but never built.
+
+1. Frontend calls `POST /films/upload-initiate` with `{ team_id, file_name, file_size_bytes }`
+   → backend creates a `films` row and returns `{ film_id, r2_key, upload_url }`. The
+   `upload_url` is a presigned PUT URL valid for 1 hour.
+2. Frontend `xhr.open('PUT', upload_url)` streams the file to R2 with progress events.
+3. On upload success, the frontend fetches a fresh Clerk JWT (long uploads can outlive the
+   ~60s token TTL) and calls `POST /films/upload-complete` with `{ film_id }` →
+   backend marks the film `uploaded` and enqueues `process_film`.
+4. On upload failure or user cancel, the frontend calls `POST /films/upload-abort` to mark
+   the film row as cleaned up.
+
+A single-PUT presigned URL is suitable for files up to 5GB on S3-compatible R2. Files larger
+than that would require a real multipart implementation; today the frontend does not enforce
+an explicit size ceiling, and the backend does not check `file_size_bytes` against a limit
+on the initiate endpoint. (Real-game film typically lands well under 5GB after compression
+recommended at the browser; oversized files surface as PUT failures from R2.)
 
 ---
 
@@ -929,6 +1094,14 @@ All environment variables for local dev live in `backend/.env` (gitignored).
 
 ## OBSERVABILITY
 
+**Status: dependencies installed, none wired.** `sentry-sdk[fastapi]`, `ddtrace`, and the
+PostHog frontend SDK are all present in `requirements.txt` / `package.json`, and the env
+vars (`SENTRY_DSN`, `DATADOG_API_KEY`, `NEXT_PUBLIC_POSTHOG_KEY`) are reserved in `.env.example`.
+**No code currently initializes any of these.** Wiring is deferred to Phase 5 production
+hardening — tracked in **GitHub Issue #29**.
+
+The target design (when wired) is:
+
 **Sentry:** Every unhandled exception in FastAPI and every failed Celery task reports to Sentry.
 Include `film_id`, `report_id`, and `user_id` in Sentry context for every task error.
 A film processing failure without these identifiers is undebuggable.
@@ -946,7 +1119,20 @@ A film processing failure without these identifiers is undebuggable.
 - `section_error` — which section failed and why
 
 These three tools serve distinct purposes. Sentry = errors. Datadog = infrastructure performance.
-PostHog = product behavior. Do not conflate them.
+PostHog = product behavior. Do not conflate them. Until wired, references in AGENTS.md to
+"set Sentry context" and the `tex.*` metric names above describe the target, not the running
+implementation.
+
+---
+
+## REPOSITORY HYGIENE (CI + LINT + SAFETY)
+
+This document does not duplicate the repo-hygiene infrastructure setup — see `README.md` for
+the canonical pointer. In brief: `pre-commit` (gitleaks + ruff + mypy + eslint + prettier +
+trailing-whitespace/EOF/merge-conflict hygiene), Dependabot weekly bumps, three required CI
+checks on every PR (`scan` from gitleaks, `lint-and-compile` from backend, `typecheck-and-build`
+from frontend), branch protection on `main` with strict-mode and admin-bypass disabled, and a
+PR template. See D-019 through D-022 for adoption history and tightening paths.
 
 ---
 
@@ -1019,21 +1205,22 @@ The full v2 schema is defined in SCHEMA.md. Migrations are numbered SQL files in
 
 ## AI PROVIDER ABSTRACTION
 
-The AI landscape changes fast. A better video model can drop next week. A competitor model can
-undercut Gemini on price. Gemini can have an outage during tournament weekend. TEX must be able
-to swap AI providers without touching anything outside a single folder and one environment variable.
-
-**The rule:** Nothing in TEX ever imports directly from a provider file. Everything imports from
-the router. The router reads `AI_VIDEO_PROVIDER` and returns the correct implementation.
+**The rule:** Nothing in TEX imports directly from a provider file. Everything imports from
+the router. The router returns the configured provider. This boundary exists so a future
+provider swap stays a single-folder change — but today the codebase only accepts `gemini`.
 
 ```
 backend/services/ai/
-├── base.py          # the contract — defines what every provider must implement
-├── gemini.py        # Gemini 2.5 Pro + 1.5 Flash implementation
-├── openai.py        # stub today — real when OpenAI ships competitive video understanding
-├── anthropic.py     # stub today — real when Claude gets native video
-└── router.py        # reads AI_VIDEO_PROVIDER, returns the right provider
+├── base.py          # the contract — AIVideoProvider abstract interface
+├── gemini.py        # Gemini 2.5 Pro + 2.5 Flash implementation (Developer API + Vertex backends)
+├── anthropic.py     # Claude 3.5 Sonnet fallback for sections 5-6 (analyze_text only)
+└── router.py        # get_ai_provider() / get_fallback_provider() — only import point
 ```
+
+The `openai.py` stub described in earlier revisions of this document does not exist on disk.
+If/when OpenAI ships competitive video understanding, a provider file will be added — but
+designing around hypothetical providers is over-engineering. The router accepts `"gemini"`
+and raises on anything else.
 
 **base.py — the interface every provider must satisfy:**
 
@@ -1043,31 +1230,35 @@ from abc import ABC, abstractmethod
 class AIVideoProvider(ABC):
 
     @abstractmethod
-    def upload_video(self, local_path: str) -> str:
-        """Upload a video chunk. Return a URI the provider can reference."""
-        pass
+    def analyze_video_cached(self, cache_uri: str, prompt: str, section_type: str) -> str:
+        """Run a section prompt against a cache handle. In synthesis-only mode the
+        cache_uri is the vertex:no-cache:<json> sentinel encoding text context, and
+        the provider unpacks it and sends [text_context, prompt] to Gemini 2.5 Pro."""
 
     @abstractmethod
     def analyze_video(self, uris: list[str], prompt: str, section_type: str) -> str:
-        """Run a section prompt against video chunks. Return section text."""
-        pass
+        """Run a prompt against raw chunk video URIs. Used by extract_chunk
+        (Prompt 0A). Sections 1-4 do NOT call this — they call analyze_video_cached."""
 
     @abstractmethod
     def analyze_text(self, context: str, prompt: str, section_type: str) -> str:
-        """Run a synthesis prompt against text only. Return section text.
-        Used for sections 5-6 which receive no video."""
-        pass
+        """Run a synthesis prompt against text only. Used for Prompt 0B and
+        sections 5-6 which receive no video."""
 
     @abstractmethod
-    def delete_video(self, uri: str) -> None:
-        """Delete uploaded video from provider storage after use."""
-        pass
+    def create_context_cache(self, synthesis_document: str, roster: str) -> object:
+        """Build the text bundle sections 1-4 will consume. Returns a sentinel,
+        not a Google CachedContent — see synthesis-only mode below."""
 
     @abstractmethod
-    def check_uri_valid(self, uri: str, expires_at) -> bool:
-        """Return False if the URI has expired or will expire within 1 hour."""
-        pass
+    def delete_context_cache(self, cache_uri: str) -> None:
+        """No-op for the sentinel path. Real cache deletion will reactivate if
+        Google's context caching becomes viable for multi-chunk video again."""
 ```
+
+The Anthropic provider (`anthropic.py`) implements only `analyze_text()`. `analyze_video()`,
+`analyze_video_cached()`, and the cache methods raise `NotImplementedError` — Claude is
+used solely as the sections 5-6 fallback for `analyze_text`.
 
 **router.py — the only file the rest of TEX imports from:**
 
@@ -1077,64 +1268,50 @@ from services.ai.base import AIVideoProvider
 
 def get_ai_provider() -> AIVideoProvider:
     provider = os.environ.get("AI_VIDEO_PROVIDER", "gemini")
-
-    if provider == "gemini":
-        from services.ai.gemini import GeminiProvider
-        return GeminiProvider()
-    elif provider == "openai":
-        from services.ai.openai import OpenAIProvider
-        return OpenAIProvider()
-    elif provider == "anthropic":
-        from services.ai.anthropic import AnthropicProvider
-        return AnthropicProvider()
-    else:
+    if provider != "gemini":
         raise ValueError(f"Unknown AI provider: {provider}")
+    from services.ai.gemini import GeminiProvider
+    return GeminiProvider()
+
+def get_fallback_provider() -> AIVideoProvider:
+    # Hardcoded for sections 5-6 text fallback. Not env-configurable.
+    from services.ai.anthropic import ClaudeProvider
+    return ClaudeProvider()
 ```
 
 **How a section task uses this — provider is never referenced directly:**
 
 ```python
-# tasks/film_processing.py
+# tasks/section_generation.py
 from services.ai.router import get_ai_provider
+from services.prompts import load_prompt
 
-def run_section(report_id: str, section_type: str, roster: list, chunks: list):
+def run_section(report_id, section_type, cache_uri, prompt_version):
     provider = get_ai_provider()
-    prompt = load_prompt(section_type)
-    uris = [c["uri"] for c in chunks]
-
-    if section_type in ("game_plan", "adjustments_practice"):
-        prior_sections = fetch_prior_sections(report_id)
-        result = provider.analyze_text(prior_sections, prompt, section_type)
-    else:
-        result = provider.analyze_video(uris, prompt, section_type)
-
-    save_section(report_id, section_type, result)
+    prompt_text, version = load_prompt(section_type)
+    content = provider.analyze_video_cached(cache_uri, prompt_text, section_type)
+    save_section(report_id, section_type, content,
+                 model_used="gemini-2.5-pro", prompt_version=version)
 ```
 
-**Environment variable controls everything:**
+**Synthesis-only mode (canonical architecture).**
+
+`create_context_cache(synthesis_document, roster)` does **not** call Google's CachedContent
+API. It returns a `vertex:no-cache:<json>` sentinel string encoding the text payload
+sections 1-4 will receive. `analyze_video_cached()` unpacks the sentinel and sends
+`[text_context, prompt]` to Gemini 2.5 Pro. No multi-chunk video is replayed into sections
+1-4. This is the design — see D-024.
+
+**Dual-backend within Gemini (Developer API + Vertex AI).**
+
+The Gemini provider switches on `GEMINI_BACKEND`. The rest of TEX never sees this distinction.
 
 ```
-AI_VIDEO_PROVIDER = "gemini"       # today — Gemini 2.5 Pro for video, Flash for text
-AI_VIDEO_PROVIDER = "openai"       # when GPT-5 ships competitive video understanding
-AI_VIDEO_PROVIDER = "anthropic"    # when Claude gets native video
+AI_VIDEO_PROVIDER = "gemini"  +  GEMINI_BACKEND = "developer_api"   → Gemini File API (48h expiry)
+AI_VIDEO_PROVIDER = "gemini"  +  GEMINI_BACKEND = "vertex"          → Vertex AI + GCS (no expiry)
 ```
 
-**Three scenarios this solves:**
-
-1. Better model drops — swap provider, run evals, ship. Zero rewrite.
-2. Price competition — route lower tiers to cheaper provider. One router change.
-3. Gemini outage — flip to backup provider. Reports keep generating during tournament weekend.
-
-**Note on Vertex AI migration:** The Gemini provider implementation (`gemini.py`) internally
-handles the `GEMINI_BACKEND` switch between Developer API and Vertex AI. The rest of TEX
-never sees this distinction — it calls `provider.analyze_video()` regardless.
-
-```
-AI_VIDEO_PROVIDER = "gemini"  +  GEMINI_BACKEND = "developer_api"   → Gemini File API
-AI_VIDEO_PROVIDER = "gemini"  +  GEMINI_BACKEND = "vertex"          → Vertex AI + GCS
-```
-
-Two env vars, complete control over the entire AI infrastructure stack.
+Both paths are wired and tested. See D-018 for the Vertex migration history.
 
 ---
 
@@ -1143,61 +1320,107 @@ Two env vars, complete control over the entire AI infrastructure stack.
 Every step in the TEX pipeline, what it uses, and why. A developer should be able to read this
 and immediately know where the LLM calls are, which model, and what requires no AI at all.
 
+The pipeline runs in two phases — **film processing** (per film, once) and **report generation**
+(per report, can run many times against the same processed film, often as a cache short-circuit).
+
+### Phase A — Film processing (per film, runs once per file_hash + preprocess_prompt_version)
+
 ```
-STEP                          TOOL                    LLM?   NOTES
-─────────────────────────────────────────────────────────────────────────────
-1.  Coach uploads film        Browser → R2            No     Presigned URL. FastAPI never touches bytes.
-2.  Film metadata saved       FastAPI → Neon           No     SQL insert. No intelligence involved.
-3.  Download film to /tmp     Worker → R2              No     FFmpeg needs seekable local file.
-4.  Film hash computed        Worker (SHA-256)         No     Hash computed AFTER download — file must be local.
-5.  Cache lookup              Worker → Neon            No     Check film_analysis_cache by hash.
-    └─ Cache hit              Return cached sections   No     Skip steps 6-15 entirely. Jump to step 19.
-    └─ Cache miss             Continue to step 6       —
-6.  Compress if > 1.8GB       FFmpeg (H.264 720p)      No     Pure video processing. No AI.
-7.  Split into chunks         FFmpeg (segment muxer)   No     Pure video processing. No AI.
-8.  Upload chunks to Gemini   Worker → Gemini File API No     Save URI + expiry to film_chunks. Keep in R2.
-9.  Poll until ACTIVE         Worker → Gemini File API No     Waiting for Gemini to process upload.
-10. Save chunk URIs to DB     Worker → Neon            No     SQL insert to film_chunks. Includes expiry timestamp.
-11. Check chunk URI expiry    Worker → Neon            No     get_valid_chunk_uris(). Re-upload from R2 if expired.
-12. Create context cache      Orchestrator → Gemini    No     Cache created ONCE before chord fires. Not by section 1.
-─────────────────────────────────────────────────────────────────────────────
-13. Section 1 — Offensive Sets     Gemini 2.5 Pro     YES    Input: cache URI (shared video + roster).
-14. Section 2 — Defensive Schemes  Gemini 2.5 Pro     YES    Input: cache URI (shared video + roster).
-15. Section 3 — PnR Coverage       Gemini 2.5 Pro     YES    Input: cache URI (shared video + roster).
-16. Section 4 — Player Pages       Gemini 2.5 Pro     YES    Input: cache URI (shared video + roster).
-    └─ Steps 13-16 run in PARALLEL via Celery chord.
-    └─ All 4 read from the same cache. Cache created once at step 12.
-    └─ Each section saved to report_sections immediately on completion.
-─────────────────────────────────────────────────────────────────────────────
-17. Section 5 — Game Plan          Gemini 2.5 Flash   YES    Input: sections 1-4 TEXT only. Fallback: Claude 3.5 Sonnet.
-18. Section 6 — Adjustments        Gemini 2.5 Flash   YES    Input: sections 1-5 TEXT only. Fallback: Claude 3.5 Sonnet.
-    └─ Steps 17-18 run sequentially. Section 6 requires section 5 output.
-    └─ Flash used here. Text-in text-out tasks. 2.5 Pro is wasteful and unnecessary.
-─────────────────────────────────────────────────────────────────────────────
-19. Write film cache entry    Worker → Neon            No     Save sections 1-4 to film_analysis_cache by hash.
-20. Delete context cache      Worker → Gemini          No     Cache no longer needed. Frees Gemini storage.
-21. Assemble PDF              WeasyPrint               No     HTML template + section text → PDF bytes.
-22. Upload PDF to R2          Worker → R2              No     Infrastructure. No intelligence.
-23. Save pdf_r2_key to DB     Worker → Neon            No     SQL update on reports table.
-24. Delete R2 chunks          Worker → R2              No     Only now — report is confirmed complete.
-25. Delete Gemini file URIs   Worker → Gemini File API No     Cleanup. files.delete per chunk URI.
-26. Write notification        Worker → Neon            No     SQL insert to notifications table.
-27. Coach downloads PDF       Browser → R2             No     Presigned read URL. 15 min expiry.
-─────────────────────────────────────────────────────────────────────────────
+STEP                            TOOL                    LLM?   NOTES
+─────────────────────────────────────────────────────────────────────────────────
+A1. Coach uploads film          Browser → R2            No     Single presigned PUT. FastAPI never touches bytes.
+A2. Film metadata saved         FastAPI → Neon          No     SQL insert. films.status = 'uploaded'.
+A3. Worker downloads to /tmp    Worker → R2             No     FFmpeg needs seekable local file.
+A4. Film hash computed          Worker (SHA-256)        No     Streaming hash. Required for the cache lookup.
+A5. Preprocess cache lookup     Worker → Neon           No     SELECT synthesis_document, sections
+                                                                FROM film_analysis_cache
+                                                                WHERE file_hash = ? AND prompt_version = ?
+    └─ Hit                      films.status='processed' No     Skip A6-A11. Synthesis (and possibly sections) is reusable.
+    └─ Miss                     Continue                —
+A6. Compress if > 1.8GB         FFmpeg (H.264 720p)     No     Pure video processing.
+A7. Split into chunks           FFmpeg (segment muxer)  No     20-25 min segments. /tmp tracked, finally-cleaned.
+A8. Upload chunks               Worker → Gemini/GCS     No     Dual backend per GEMINI_BACKEND.
+                                                                Developer API: 48-hour expiry tracked in DB.
+                                                                Vertex/GCS: no expiry.
+A9. Prompt 0A on each chunk     Gemini 2.5 Pro          YES    extract_chunk × N, run in PARALLEL.
+                                                                Per-chunk structured observation log.
+                                                                Output written to film_chunks.extraction_output.
+A10. Prompt 0B synthesis        Gemini 2.5 Flash        YES    run_chunk_synthesis, single call.
+                                                                Text-in (all extractions + roster), text-out.
+                                                                NO video re-read at synthesis time.
+                                                                Writes film_analysis_cache.synthesis_document.
+A11. films.status='processed'   Worker → Neon           No     The report can now generate against this film.
+─────────────────────────────────────────────────────────────────────────────────
+```
+
+Phase A's LLM cost is dominated by **A9 (Prompt 0A on N chunks of video)**. A10 is a text-only
+Flash call and is cheap by comparison. Everything else is FFmpeg + I/O. A successful Phase A
+populates the `film_analysis_cache.synthesis_document` once for that film at that
+preprocess_prompt_version — every subsequent report against the film skips A6-A11 entirely.
+
+### Phase B — Report generation (per report)
+
+```
+STEP                            TOOL                    LLM?   NOTES
+─────────────────────────────────────────────────────────────────────────────────
+B1. generate_report dispatch    FastAPI → Celery         No     Free/credit path or Stripe webhook trigger.
+B2. Fetch films + roster        Worker → Neon            No     Verify all films have status='processed'.
+B3. Section-cache short-circuit Worker → Neon            No     SELECT film_analysis_cache.sections at
+                                                                 current composite prompt_version.
+    └─ Hit (single-film only)   Skip B4-B9               No     Write sections 1-4 to report_sections with
+                                                                 model_used='cached'. Jump to B10.
+    └─ Miss                     Continue                 —
+B4. Refresh chunk URIs          uri_expiry.py            No     Developer API: re-upload from R2 if URI expires
+                                                                 within 1h. Vertex/GCS: no-op.
+B5. Build synthesis-only ctx    Worker (services/ai)     No     synthesis_document(s) + roster text.
+                                                                 create_context_cache() wraps as the
+                                                                 vertex:no-cache:<json> sentinel.
+                                                                 NO Google CachedContent created. NO chunk
+                                                                 video sent to sections 1-4.
+B6. Section 1 — Offensive Sets    Gemini 2.5 Pro         YES    analyze_video_cached(sentinel, prompt) →
+                                                                 sends [text_context, prompt].
+B7. Section 2 — Defensive Schemes Gemini 2.5 Pro         YES    Same. Input is synthesis_document text.
+B8. Section 3 — PnR Coverage      Gemini 2.5 Pro         YES    Same.
+B9. Section 4 — Player Pages      Gemini 2.5 Pro         YES    Same.
+    └─ B6-B9 run in PARALLEL via Celery chord on the section_generation queue.
+    └─ Each section saved to report_sections on completion.
+─────────────────────────────────────────────────────────────────────────────────
+B10. Section 5 — Game Plan      Gemini 2.5 Flash         YES    Input: sections 1-4 text. Fallback: Claude 3.5 Sonnet.
+B11. Section 6 — Adjustments    Gemini 2.5 Flash         YES    Input: sections 1-5 text. Fallback: Claude 3.5 Sonnet.
+     └─ B10-B11 run sequentially. Section 6 depends on section 5 output.
+     └─ B10/B11 are NOT cached at the section level — they depend on this report's roster/coach intent.
+─────────────────────────────────────────────────────────────────────────────────
+B12. Cache sections 1-4         Worker → Neon            No     UPDATE film_analysis_cache.sections.
+                                                                 Future single-film regenerations short-circuit at B3.
+B13. Assemble PDF               WeasyPrint               No     HTML built inline (services/pdf.py) + report.css.
+B14. Upload PDF to R2           Worker → R2              No     reports/{user_id}/{report_id}/scouting_report.pdf
+B15. reports.status terminal    Worker → Neon            No     'complete' / 'partial' / 'error'.
+                                                                 'partial' is a real terminal state.
+B16. Delete Gemini file URIs    Worker → Gemini/GCS      No     Cleanup. Per chunk.
+B17. Delete R2 chunks           Worker → R2              No     Only now — report is confirmed terminal.
+B18. Write notification         Worker → Neon            No     Type matches terminal status.
+B19. Coach downloads PDF        Browser → R2             No     pdf_url embedded in GET /reports/{id} response.
+                                                                 15-minute presigned read URL.
+─────────────────────────────────────────────────────────────────────────────────
 ```
 
 **Summary:**
-- 27 steps total in the pipeline.
-- 6 steps touch an LLM (steps 13-18).
-- 21 steps involve zero AI — infrastructure, SQL, FFmpeg, file I/O.
-- Gemini 2.5 Pro called exactly 4 times per report (sections 1-4), all parallel.
-- Gemini 2.5 Flash called exactly 2 times per report (sections 5-6), sequential.
-- Context cache created once at step 12 by orchestrator — shared across all 4 parallel sections.
-- A cache hit eliminates steps 6-18 entirely — jumps from step 5 to step 19.
-- R2 chunks kept until step 24 — never deleted before report is confirmed complete.
+- LLM calls per fully-cold report (no caches hit): A9 (× N chunks, Gemini 2.5 Pro) + A10
+  (Flash) + B6-B9 (4× Gemini 2.5 Pro) + B10-B11 (2× Flash) = `N + 1 + 4 + 2` calls. For a
+  typical 5-chunk film that's 12 LLM calls total.
+- LLM calls per regenerated report against an already-processed film at the same
+  prompt_version (section-cache hit at B3): only B10 + B11 = 2 Flash calls.
+- LLM calls per re-uploaded duplicate film (Phase A cache hit at A5) generating its first
+  report: B6-B9 (4× Pro) + B10-B11 (2× Flash) = 6 LLM calls.
+- The cache strategy compounds: more coaches scouting overlapping opponents → higher A5 hit
+  rate → fewer Phase A re-runs; more regenerations of the same report → higher B3 hit rate
+  → near-zero marginal cost.
+- Chunk video is consumed exactly once per film (at A9). Sections 1-4 never re-read video.
 
-**This map is the cost model.** Every dollar TEX spends on AI is in steps 13-18.
+**This map is the cost model.** Every dollar TEX spends on AI is in the rows tagged `YES`.
 Everything else is infrastructure cost — storage, compute, egress. Know the difference.
+COSTS.md (rewritten in PR 3 of the doc refresh) computes per-report dollar figures from this
+map.
 
 ---
 
@@ -1238,16 +1461,22 @@ def run_text_section(report_id: str, section_type: str, context: str) -> str:
 The fallback is hardcoded for sections 5-6 — it is not configurable via env var because
 the fallback relationship is specific: Flash fails → Claude steps in. Nothing else.
 
-**What gets logged on a fallback:**
-Every fallback event writes to a `fallback_events` table:
-`report_id, section_type, primary_provider, fallback_provider, error_reason, timestamp`
-This surfaces in Datadog as a metric — `tex.fallback.triggered` tagged by section_type.
-A spike in fallback events signals a Gemini Flash degradation before coaches notice anything.
+**What gets logged on a fallback (target design — not yet wired):**
+The `fallback_events` table exists in the schema with the target columns
+(`report_id, section_type, primary_provider, fallback_provider, error_reason, created_at`)
+and the target Datadog metric `tex.fallback.triggered`. **Application code does not currently
+write to this table.** The decision to wire writes — or drop the table entirely — depends on
+the Phase 4 eval results for sections 5-6: if those sections move to Gemini Pro, the entire
+Flash+Claude fallback architecture becomes irrelevant. Tracked in **GitHub Issue #27**.
 
-**The Anthropic provider stub already exists** in `backend/services/ai/anthropic.py`.
-For launch it implements only `analyze_text()` — the one method sections 5-6 need.
-`analyze_video()`, `upload_video()`, and `delete_video()` raise `NotImplementedError`
-until Claude has native video understanding and TEX adds full support.
+Until then: `run_text_section` catches the Flash exception and silently invokes Claude.
+The fallback path works at the function level; the operational visibility into how often
+it fires is the gap.
+
+**The Anthropic provider exists** at `backend/services/ai/anthropic.py`. It implements
+`analyze_text()` — the one method sections 5-6 need via fallback. `analyze_video()`,
+`analyze_video_cached()`, `create_context_cache()`, and `delete_context_cache()` raise
+`NotImplementedError` — Claude is used solely as the sections 5-6 text fallback.
 
 ```
 Summary:
@@ -1419,91 +1648,54 @@ def acquire_gemini_slot(model: str):
 `RATE_LIMITS` is configured per model and updated when Google grants quota increases.
 Every Gemini call in every worker calls `acquire_gemini_slot` before executing. No exceptions.
 
-### Context Caching — Mandatory, Not Optional
+### Two-Layer Caching — Synthesis + Sections
 
-Context caching is not a performance optimization for TEX. It is what makes the unit economics work.
+TEX caches at two levels. Both layers are keyed on `(file_hash, composite_prompt_version)`
+in `film_analysis_cache`. Together they make TEX's marginal cost approach zero as the same
+films appear repeatedly across coaches and as the same reports are regenerated.
 
-Video is billed at 263 tokens per second. A 2-hour film = 1.89 million tokens. That exceeds
-Gemini 2.5 Pro's 200K threshold, meaning every call is billed at the long-context rate of
-$2.50/M input tokens. Without caching, sections 1-4 each pay full price for the same video
-input — 4 × $4.73 = $18.92 in video input alone per report before output or infrastructure.
+**Layer 1 — Synthesis document (`film_analysis_cache.synthesis_document`).**
+Produced once per film by Prompt 0B in `run_chunk_synthesis`. Every subsequent report
+against the same film at the same preprocess_prompt_version reads the cached synthesis
+document and skips Prompt 0A on every chunk plus Prompt 0B. The biggest dollar amount in
+Phase A (per-chunk Gemini 2.5 Pro on video) is paid once and reused forever.
 
-With context caching, section 1 pays full price and creates the cache. Sections 2, 3, and 4
-read from that cache at 10% of the input price ($0.25/M vs $2.50/M).
+**Layer 2 — Section outputs (`film_analysis_cache.sections` jsonb).**
+Written by `_cache_section_outputs` after sections 1-4 complete. Read by `_try_section_cache_hit`
+at the top of `generate_report` for single-film reports. On a hit, the section_generation chord
+is skipped entirely — sections 1-4 are written to `report_sections` with `model_used='cached'`,
+and the pipeline jumps directly to sections 5-6. Sections 5-6 are not cached at the section
+level because they depend on this report's coach intent and may carry roster-specific framing
+in the future.
 
-```
-Without caching:   4 sections × $4.73 video input = $18.92
-With caching:      $4.73 + (3 × $0.47) = $6.14 video input
-Savings:           $12.78 per report on input tokens alone
-```
+The composite cache key (see PROMPTS.md) invalidates both layers when any prompt version
+changes. A `chunk_extraction.txt` bump invalidates Layer 1 (and therefore Layer 2). An
+`offensive_sets.txt` bump (the sentinel for the 6-section bundle) invalidates Layer 2 only.
+The pipeline reruns whichever phase the bump invalidated.
 
-Cache storage costs $4.50/M tokens/hour. For a 15-minute report generation window,
-storage cost on 1.89M tokens = $2.13. Net saving is still ~$10.65 per report.
+Concrete per-report cost numbers under this two-layer model are computed in COSTS.md.
 
-**Implementation rule:** The context cache is created by the `generate_report` orchestrator
-before the chord fires. The cache URI is passed to all 4 sections as a parameter. No section
-creates the cache — only the orchestrator does. This is what allows all 4 sections to run
-simultaneously while sharing the same cached video input.
+### Why Google's CachedContent is not used today
 
-```python
-# report_generation.py — cache creation and reuse pattern
-def generate_report(report_id: str):
-    chunks = get_valid_chunk_uris(conn, film_id)
+The original design — a Gemini CachedContent built from chunk URIs and shared across all 4
+section calls — was switched off in favor of synthesis-only mode (D-024). Sections 1-4 read
+the synthesis document as text, not chunk video. There is no Google CachedContent created
+at report generation time. The `create_context_cache()` call returns a local sentinel string
+the provider unpacks at section call time.
 
-    # orchestrator creates the cache BEFORE firing the chord
-    # all 4 sections receive the cache_uri — none of them create it
-    cache = provider.create_context_cache(chunks, roster)
-    cache_uri = cache.name
+### Rate-limit buckets
 
-    chord(
-        group(
-            run_section.s(report_id, "offensive_sets", cache_uri),
-            run_section.s(report_id, "defensive_schemes", cache_uri),
-            run_section.s(report_id, "pnr_coverage", cache_uri),
-            run_section.s(report_id, "player_pages", cache_uri),
-        )
-    )(run_synthesis_sections.s(report_id))
-
-    # cache is deleted after all 4 sections complete — see cleanup task
-```
-
-### Batch API Routing — Financial Justification
-
-The Batch API routing decision (route non-urgent jobs to batch, real-time for active coaches)
-is not just a rate-limit strategy. It is a margin decision.
-
-Batch API is 50% off all Gemini costs. For a $9-10 real-time report:
+`services/rate_limit.py` runs three independent Redis token buckets:
 
 ```
-Real-time report cost:    ~$9.25
-Batch report cost:        ~$5.01
-Margin difference:        ~$4.24 per report
+gemini-2.5-pro     —   3 requests / 60s   (Prompt 0A and sections 1-4)
+gemini-2.5-flash   —  15 requests / 60s   (Prompt 0B and sections 5-6)
+gemini-file-api    —  10 requests / 60s   (file uploads — separate from prompt buckets)
 ```
 
-At 1,000 reports/month with 60% routed to batch:
-600 batch × $4.24 savings = $2,544/month in recovered margin.
-
-The routing heuristic already defined in this document (poll gap > 120 seconds → batch)
-captures the majority of overnight uploads without any coach-facing change. Coaches who
-upload and close the tab never know they got a batch job. Coaches actively watching the
-progress indicator get real-time. The product experience is identical. The economics are not.
-
-
-
-Gemini's Batch API processes requests asynchronously with a 24-hour SLA at 50% lower cost.
-A coach who uploads film at 11pm does not need the report in 12 minutes. They need it by morning.
-
-```python
-def route_report_job(report_id: str, user_last_poll: datetime):
-    seconds_since_poll = (now() - user_last_poll).seconds
-    if seconds_since_poll < 120:        # coach is actively waiting
-        queue = "report_generation_realtime"
-    else:                                # coach closed the tab
-        queue = "report_generation_batch"
-```
-
-At scale, the majority of reports are submitted and abandoned — coaches upload and come back.
-Routing these to the Batch API halves their cost with no perceived quality difference.
+The file-API bucket exists separately because uploading a chunk and running a prompt against
+it count against different quotas on Google's side. Sharing one bucket across both would
+under-utilize quota and slow Prompt 0A throughput.
 
 ### Film Fingerprint Cache — The Moat Multiplier
 
@@ -1589,55 +1781,66 @@ the coach no reason to explain what was wrong. An in-app feedback form tied to t
 report_id gives TEX a correction. Tommy reviews and decides case-by-case whether to comp
 the report. No automated refund policy for quality issues.
 
-**Payment gate implementation:**
+**Payment gate is a two-step flow.** `POST /reports` decides which path the user is on and
+returns a small payload the frontend acts on. Stripe checkout, if required, is created in a
+separate call.
 
 ```python
 # routers/reports.py
 @router.post("/reports")
-async def create_report(request: ReportCreateRequest, user = Depends(verify_clerk_jwt)):
-
-    # first report free check
-    if user["reports_used"] == 0:
-        report_id = create_report_record(conn, user["id"], request)
-        increment_reports_used(conn, user["id"])
+async def create_report(request: ReportCreateRequest, user = Depends(get_current_user)):
+    decision = check_payment_gate(user)
+    # decision.path is one of: 'free' | 'credit' | 'stripe_required'
+    if decision.path in ("free", "credit"):
+        report_id = create_report_record(conn, user.id, request)
+        consume_entitlement(cur, user.id, path=decision.path)
         generate_report.delay(report_id)
-        return {"report_id": report_id, "status": "processing", "charged": False}
+        return {"report_id": report_id, "status": "processing", "payment_required": False}
+    # stripe_required — frontend will call /stripe/create-checkout-session next
+    return {"payment_required": True, "team_id": request.team_id,
+            "film_ids": request.film_ids}
 
-    # paid path — create Stripe checkout session
-    checkout = stripe.checkout.Session.create(
-        customer=user["stripe_customer_id"],
+# routers/stripe.py
+@router.post("/create-checkout-session")
+async def create_checkout_session(req: CheckoutRequest, user = Depends(get_current_user)):
+    session = stripe.checkout.Session.create(
+        customer=user.stripe_customer_id,
         line_items=[{"price": STRIPE_REPORT_PRICE_ID, "quantity": 1}],
         mode="payment",
-        success_url=f"{BASE_URL}/reports/{{CHECKOUT_SESSION_ID}}/processing",
-        cancel_url=f"{BASE_URL}/dashboard",
-        metadata={"user_id": user["id"], "report_request": json.dumps(request.dict())}
+        success_url=f"{BASE_URL}/dashboard?checkout=success",
+        cancel_url=f"{BASE_URL}/dashboard?checkout=cancel",
+        metadata={
+            "tex_user_id": str(user.id),
+            "tex_team_id": str(req.team_id),
+            "tex_film_ids": json.dumps([str(i) for i in req.film_ids]),
+        },
     )
-    return {"checkout_url": checkout.url}
+    payment_id = record_pending_payment(user.id, session)
+    return {"checkout_url": session.url, "payment_id": payment_id}
 ```
 
-**Stripe webhook handler:**
+**Stripe webhook handler** lives at `POST /stripe/webhook` (Stripe router mounted under
+`/stripe`, not under `/webhooks`):
 
 ```python
-# routers/webhooks.py
-@router.post("/webhooks/stripe")
+# routers/stripe.py
+@router.post("/webhook")
 async def stripe_webhook(request: Request):
-    # always verify signature before processing
-    event = stripe.Webhook.construct_event(
-        await request.body(),
-        request.headers["stripe-signature"],
-        STRIPE_WEBHOOK_SECRET
-    )
-
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        user_id = session["metadata"]["user_id"]
-        report_request = json.loads(session["metadata"]["report_request"])
-
-        report_id = create_report_record(conn, user_id, report_request)
-        increment_reports_used(conn, user_id)
-        record_payment(conn, user_id, report_id, session)
+    event = verify_webhook(await request.body(),
+                           request.headers["stripe-signature"])
+    if event.type == "checkout.session.completed":
+        session = event.data.object
+        user_id = session.metadata["tex_user_id"]
+        team_id = session.metadata["tex_team_id"]
+        film_ids = json.loads(session.metadata["tex_film_ids"])
+        report_id = create_report_record(conn, user_id, team_id, film_ids)
+        mark_payment_complete(conn, session.id, report_id)
         generate_report.delay(report_id)
 ```
+
+The `payments` table tracks one row per Stripe session (`pending` → `complete` / `failed`).
+The webhook handler is the only path that transitions `complete` and creates the report
+record on the paid path.
 
 **Technical failure credit:**
 
@@ -1659,18 +1862,12 @@ Credit is checked before the Stripe gate — if `user.report_credits > 0`, decre
 credit and skip Stripe checkout entirely. No coach ever sees a payment screen for a
 report they already paid for that failed.
 
-**In-app quality feedback:**
+**In-app quality feedback:** Not built today. A `report_feedback` table was sketched in the
+original design and does not exist in the migrations. Coaches who want to flag a quality
+issue currently have no in-product path; Tommy hears about issues out-of-band. Adding the
+feedback loop is a Phase 4+ task tied to the training-mode UX work.
 
-Every completed report shows a feedback button. Coach clicks it, sees a structured form:
-- Which section is wrong? (dropdown — offensive sets, defensive schemes, etc.)
-- What did TEX get wrong? (free text)
-- Severity: minor issue / major issue / report is unusable
-
-Submits to `report_feedback` table. Tommy reviews in training mode. Every submission
-is a potential correction. Tommy decides individually whether to comp the report.
-No automated quality refunds at launch.
-
-**Pricing tiers (documented here, implemented in Stripe Products):**
+**Pricing tier — STARTER only.**
 
 ```
 STARTER — Pay per report
@@ -1678,25 +1875,18 @@ STARTER — Pay per report
   First report free per account
   No commitment
   Target: AAU/EYBL coaches, occasional scouts
-  TEX margin: ~80% real-time, higher with batch routing
-
-COACH — $199/month
-  10 reports/month ($19.90 effective per report)
-  Up to 5 unused reports roll over
-  Target: active college scouts, high school programs
-  TEX margin: ~50-60% (batch routing improves this significantly)
-
-PROGRAM — $499/month
-  40 reports/month ($12.50 effective per report)
-  Priority queue — real-time processing guaranteed
-  Target: D1/D2 programs, serious EYBL programs
-  TEX margin: ~50% at batch pricing for off-peak volume
 ```
 
-Pricing reflects a 70-80% gross margin target. Human scouts charge $200-500/report.
-Synergy subscriptions cost $2,000-5,000/year for college programs. TEX at $49/report
-is a fraction of either alternative while delivering a report in 30-50 minutes vs
-4-48 hours. Price holds until a direct competitor exists that does what TEX does.
+This is the only tier wired in code. The `STRIPE_REPORT_PRICE_ID` env var drives the
+checkout session above (`mode="payment"`, one-off). Two additional env vars exist —
+`STRIPE_COACH_PRICE_ID` and `STRIPE_PROGRAM_PRICE_ID` — but no subscription-mode checkout
+or recurring-billing code path is built. Subscription tier design (Coach / Program) will be
+informed by usage patterns once paying coaches reveal them; tracked in **GitHub Issue #30**.
+
+Pricing reflects a high gross-margin target relative to human scouts (who charge $200-500/report)
+and Synergy subscriptions ($2,000-5,000/year for college programs). TEX at $49/report is a
+fraction of either alternative while delivering a report in 30-50 minutes vs 4-48 hours.
+Exact margin numbers depend on the synthesis-only cost model and are recomputed in COSTS.md.
 
 ---
 
@@ -1774,3 +1964,12 @@ SCHEMA.md contains the complete SQL. Corrections are never deleted. Ever.
 8. **Every query against a user-facing table must include `WHERE user_id = {verified_user_id}`.** No exceptions. See DATA ISOLATION section.
 9. **No ORM.** Raw SQL. Every query is explicit and visible.
 10. **is_admin is checked on every admin request**, not cached, not inferred from the JWT.
+
+---
+
+*Last updated: 2026-05-19 — synthesis-only mode (D-024) documented as canonical; report pipeline*
+*and intelligence map rewritten; AI provider abstraction reduced to Gemini-only; subscription tiers,*
+*Batch API routing, multipart upload, and `report_feedback` removed (unbuilt); Stripe path corrected*
+*to `/stripe/webhook`; PDF template path corrected; process_film timeouts at 117/120 minutes (D-026);*
+*observability tools listed as unwired pending Issue #29; section-cache short-circuit and dual-backend*
+*Vertex/GCS support documented.*

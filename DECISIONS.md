@@ -598,6 +598,88 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-023 — Prompts 0A/0B v1.6 documented as canonical baseline
+
+**Date:** 2026-05-19
+**Status:** Adopted
+
+**Decision:** Prompts 0A (`chunk_extraction.txt`) and 0B (`chunk_synthesis.txt`) at **`VERSION: v1.6`** are documented in PROMPTS.md as the canonical baseline for the Stage-1 commercial-readiness gate. The §STAGE 1 and §STAGE 2 fences in PROMPTS.md are re-mirrored verbatim from the `.txt` files (no more "v1.0 baseline mirror" notes). The composite cache key derivation (`{sections_v}|{preprocess_v}` from `services/prompt_versions.py`) is documented in the PROMPT VERSIONING PROTOCOL section, including the `+` join behavior when 0A and 0B diverge and the `offensive_sets.txt`-as-sentinel rule for the 6-section bundle.
+
+**Rationale:** The drift report (`docs/drift-report-2026-05-19.md`) flagged PROMPTS.md as stale on three counts: (a) version markers at v1.5 instead of v1.6, (b) mirrored bodies frozen at the v1.0 baseline (6 revisions behind), and (c) cache-key composition mechanism undocumented anywhere. The half-mirror state was the worst of both worlds — readers could copy-paste a baseline that hadn't been the production prompt for months. Documenting v1.6 as canonical and synchronizing the mirrors closes the drift; documenting the cache-key mechanism prevents future prompt edits from silently failing to invalidate stale cached work.
+
+**Tightening path:** Subsequent prompt revisions (v1.7+) must update the mirror in PROMPTS.md in the **same PR** as the `.txt` edit. Reviewers should reject any prompt-`.txt` change whose PR diff does not also touch PROMPTS.md's mirrored body. The "under redesign" language has been removed from PROMPTS.md; further post-eval iteration of Prompts 0A/0B is tracked in **GitHub Issue #28** and will be re-canonicalized in this file once the Step-6 eval threshold lands a stable version.
+
+**Reversal condition:** None for the documentation discipline itself. The specific v1.6 body is reversible — bump to v1.7+ in `.txt` files, mirror to PROMPTS.md in the same PR, log under D-NNN if the rationale is significant.
+
+---
+
+## D-024 — Synthesis-only mode (Option 3) adopted as canonical architecture
+
+**Date:** 2026-05-19
+**Status:** Adopted
+
+**Decision:** Report-generation sections 1-4 read the `synthesis_document` produced by Prompt 0B as **text context**, not the raw chunk video. The pipeline is: Prompt 0A processes each chunk's video once → Prompt 0B synthesizes all extractions into a unified document → sections 1-4 (Gemini 2.5 Pro) receive [synthesis_document + roster] as text Parts → sections 5-6 (Gemini 2.5 Flash, Claude fallback) build on sections 1-4 text. Google's `CachedContent` API is **not** used at report-generation time; `services/ai/gemini.py::create_context_cache()` returns a local `vertex:no-cache:<json>` sentinel encoding the text payload. Chunk video is consumed exactly once in the pipeline, during `extract_chunk`.
+
+**Rationale:** The original design (Gemini CachedContent built from chunk URIs, shared across sections 1-4) hit Google's context-caching quota in a way that blocked Phase 3 evals (see D-018 history). Switching to a text-first architecture, with Prompt 0A doing the perception work and Prompt 0B reconciling, produced a stable, debuggable pipeline that decouples TEX from Google's caching quirks. The synthesis document is also a better unit of grading: it can be smell-tested against the golden-set ground-truth docs directly, independent of section-prompt drift. With this architecture stable, the original "video-to-cache-to-sections" design is no longer the target; switching back would require fresh evaluation, not just enabling a flag.
+
+**What this changes:**
+- `services/ai/gemini.py::create_context_cache()` returns the `vertex:no-cache:<json>` sentinel; sections 1-4 call `analyze_video_cached()` which sends `[text_context, prompt]` to Gemini 2.5 Pro.
+- Rate-limit buckets and Prompt-0A token cost dominate the per-film unit-cost equation (re-modeled in COSTS.md in PR 3 of the doc refresh).
+- ARCHITECTURE.md report pipeline + pipeline intelligence map + AI provider abstraction rewritten in PR 2 of the doc refresh.
+- AGENTS.md `run_synthesis_sections` cleanup logic updated to skip Google-cache deletion when `cache_uri` is a sentinel.
+
+**Alternatives considered:**
+- Stay on Google CachedContent and wait out the quota issue: rejected — quota timing was unknown and the eval grind was blocked.
+- Hybrid (video for some sections, text for others): rejected as more complex for unclear benefit; revisit only if eval results show sections that demonstrably need raw video re-reading.
+
+**Reversal condition:** Future evaluation shows that re-introducing chunk video alongside the synthesis document materially improves accuracy on a section that the synthesis-only path under-serves (most likely candidate: player_pages, where individual-player observation may benefit from re-watching). At that point: re-introduce a real cache or per-section video Parts behind the same `analyze_video_cached()` interface — the abstraction is built for this. Until that evaluation runs and produces evidence, synthesis-only is the architecture.
+
+---
+
+## D-025 — Graceful synthesis degradation removed; synthesis_failed column unused
+
+**Date:** 2026-05-19
+**Status:** Adopted
+
+**Decision:** If `run_chunk_synthesis` (Prompt 0B) fails after all retries, the film transitions to `status='error'` and the coach is notified. Sections 1-4 are **not** attempted without the synthesis document. The previously-documented "graceful degradation" path (set `films.status='processed'`, set `films.synthesis_failed=true`, run sections 1-4 against raw video and roster) is removed from the architecture. The `films.synthesis_failed boolean` column in `migrations/004_create_films.sql` becomes dead schema; it will be dropped in a future migration.
+
+**Rationale:** The degradation path was designed for the original video-fed-sections architecture (D-024). Under that design, raw video plus roster was already the section 1-4 input — the synthesis document was an enrichment. When sections were demoted to text-only input (D-024), the synthesis document became the input. There is no longer a "without the synthesis document" path that produces useful section output; what sections 1-4 receive in synthesis-only mode is the synthesis document. Pretending otherwise produces empty reports the coach has to refund anyway. Failing loudly on synthesis failure is the correct behavior — the failure credit (D-017) ensures the coach is made whole. Cleaner failure mode, fewer states to reason about.
+
+**What this changes:**
+- AGENTS.md `run_chunk_synthesis` step 7 documents `status='error'` on final retry.
+- ARCHITECTURE.md report pipeline + AI provider abstraction reflect "synthesis_document is required for sections 1-4."
+- `films.synthesis_failed` column is documented in SCHEMA.md but marked unused; a future migration will drop it (no rush — it's a single boolean column, harmless to leave).
+
+**Alternatives considered:**
+- Keep the degradation path and accept low-quality sections 1-4 on synthesis failure: rejected — coach experience worse than a clean failure + credit.
+- Add a fallback Prompt 0B (e.g., simpler synthesis on Claude): not needed at current scale; if Prompt 0B reliability becomes a problem, evaluate then.
+
+**Reversal condition:** Synthesis failure rate is high enough that the coach-facing impact (films failing terminally) outweighs the cost of providing a degraded report. At current rates this is hypothetical.
+
+---
+
+## D-026 — process_film hard timeout fixed at 120 minutes
+
+**Date:** 2026-05-19
+**Status:** Adopted
+
+**Decision:** `process_film` runs with `soft_time_limit=7000` (~117 min) and `time_limit=7200` (120 min). The previous configuration of 55/60 minutes is removed. Optimizing FFmpeg compression speed inside the Docker for Mac dev environment is **not** on the critical path — the timeout adjustment accepts the slow case rather than re-engineering the compression pipeline pre-launch.
+
+**Rationale:** Empirically, FFmpeg's H.264 re-encode runs ~10× slower in Docker for Mac than native macOS (no VideoToolbox hardware acceleration inside the Linux VM). A 2-hour 1080p film can spend 40+ minutes on compression alone, followed by chunk uploads and Prompt 0A extraction per chunk. The original 60-minute hard limit consistently false-positive-killed real Film 04 runs in dev. Production Cloud Run workers do not have the Docker for Mac performance penalty (Linux x264 software encoding on Cloud Run CPU allocations is fast enough), but the doubled timeout is a safe ceiling for both environments and for genuinely long inputs. The trade-off vs the original 60-minute limit is: detection latency for a stuck task goes from ~60 minutes to ~120 minutes. Acceptable — startup recovery + dead-letter alerts catch persistent stuck tasks anyway, and a stuck task can be killed manually from the admin UI faster than waiting for the hard limit.
+
+**What this changes:**
+- AGENTS.md timeout reference table: `process_film` row says 117/120 min.
+- ARCHITECTURE.md Celery section: timeout box says 117/120 min, with the Docker-for-Mac rationale explained.
+- `backend/tasks/film_processing.py`: `soft_time_limit=7000`, `time_limit=7200`. Error string updated to "Processing timed out after 120 minutes" (both `_write_dead_letter` call and `_update_film_status` call).
+
+**Alternatives considered:**
+- Engineer faster compression (e.g., NVENC on a GPU worker, or pre-compress at upload time): rejected — out of scope pre-launch. The compression cost itself is also fine; it's only the dev-loop ergonomics that degraded.
+- Skip compression entirely for files under 2GB and force coaches to compress before upload: rejected — adds friction for the coach.
+
+**Reversal condition:** Production Cloud Run runs show `process_film` consistently completing under 60 minutes, AND the dev environment moves to a setup that doesn't pay the Docker-for-Mac penalty (e.g., native dev, or a Linux dev VM with HW acceleration). At that point, tightening the limit back toward 60 minutes restores faster stuck-task detection.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -616,5 +698,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 18, 2026 — D-022 added (repository documentation).*
-*22 decisions logged. All decisions current as of this date.*
+*Last updated: May 19, 2026 — D-024/D-025/D-026 added (synthesis-only mode canonical, graceful degradation removed, process_film timeouts confirmed at 117/120 min).*
+*26 decisions logged. All decisions current as of this date.*
