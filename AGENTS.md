@@ -9,7 +9,7 @@ This document is the authoritative reference for everything that runs asynchrono
 
 ## OVERVIEW — WHAT RUNS WHERE
 
-TEX v2 has 9 Celery tasks distributed across 4 queues running on 4 Cloud Run worker services.
+TEX v2 has 8 Celery tasks distributed across 4 queues running on 4 Cloud Run worker services.
 The FastAPI API enqueues tasks. Workers execute them. Workers never call each other directly —
 all coordination happens through Redis (the queue) and Neon (shared state).
 
@@ -17,7 +17,8 @@ all coordination happens through Redis (the queue) and Neon (shared state).
 QUEUE                  WORKER SERVICE          TASKS
 ──────────────────────────────────────────────────────────────────────────────
 film_processing        tex-worker-film         process_film
-                                               extract_chunk          (one per chunk, parallel)
+                                               extract_chunk          (one per chunk, parallel — Prompt 0A)
+                                               run_chunk_synthesis    (single call after all chunks — Prompt 0B)
 report_generation      tex-worker-report       generate_report
                                                run_synthesis_sections (chord callback)
                                                assemble_and_deliver
@@ -68,8 +69,11 @@ def process_film(self, film_id: str):
 **Rule 3 — Dead letter on final retry.** When `self.request.retries >= self.max_retries`,
 write to `dead_letter_tasks` before raising. The write happens even if the raise fails.
 
-**Rule 4 — Sentry context.** Set `film_id`, `report_id`, `user_id` in Sentry scope before
-any work. A failure without these identifiers is undebuggable in production.
+**Rule 4 — Sentry context (deferred).** The Sentry SDK is in `requirements.txt` but is not
+yet initialized in code. When observability is wired (**GitHub Issue #29**), every task will
+set `film_id`, `report_id`, `user_id` in Sentry scope before any work — a failure without
+these identifiers is undebuggable in production. Until then, the task narratives below that
+say "Set Sentry context" describe the target wiring, not the running implementation.
 
 **Rule 5 — Fresh DB connection per logical operation.** Never hold a connection across a
 Gemini call, an FFmpeg call, an R2 download, or any operation that takes more than a few
@@ -85,14 +89,32 @@ seconds. Open → execute → close. Every time.
 ```
 TASK                       QUEUE                SOFT LIMIT   HARD LIMIT   RETRIES   BACKOFF
 ────────────────────────────────────────────────────────────────────────────────────────────
-process_film               film_processing      55 min       60 min       3         30s/120s/480s
+process_film               film_processing      117 min      120 min      3         30s/60s/120s
 extract_chunk              film_processing      8 min        10 min       3         30s/60s/120s
-generate_report            report_generation    25 min       30 min       3         30s/120s/480s
+run_chunk_synthesis        film_processing      10 min       12 min       2         60s/180s
+generate_report            report_generation    25 min       30 min       3         30s/60s/120s
 run_synthesis_sections     report_generation    10 min       12 min       2         60s/180s
-assemble_and_deliver       report_generation    10 min       12 min       2         60s/180s
-run_section                section_generation   8 min        10 min       3         30s/120s/480s
+assemble_and_deliver       report_generation    10 min       12 min       2         60s/180s/540s
+run_section                section_generation   8 min        10 min       3         30s/60s/120s
 notify_coach               notifications        25 sec       30 sec       3         5s/10s/20s
 ```
+
+**Backoff formulas (canonical — match code):**
+
+```
+process_film, extract_chunk, run_section, generate_report:
+    countdown = 30 * (2 ** retries)        # 30s, 60s, 120s
+
+run_chunk_synthesis, run_synthesis_sections, assemble_and_deliver:
+    countdown = 60 * (3 ** retries)        # 60s, 180s, 540s
+
+notify_coach:
+    countdown = 5 * (2 ** retries)         # 5s, 10s, 20s
+```
+
+The exponential schedule produces forgiving backoff on the first retry (the most common
+real-world failure is a transient Gemini hiccup that clears in seconds) and progressively
+longer pauses if the issue persists.
 
 **Soft limit:** `SoftTimeLimitExceeded` is raised inside the task. The task catches it,
 writes error status to DB, cleans up /tmp, and exits gracefully.
@@ -104,6 +126,52 @@ Cloud Run instance /tmp is ephemeral and will be cleaned when the instance is re
 **Why `notify_coach` has a 30-second hard limit:** A single DB insert taking 30 seconds means
 the database is broken, not the task. Surface this immediately — do not let a broken notification
 task sit in the queue retrying for minutes while the coach waits to see that their report is done.
+
+---
+
+## CELERY APP CONFIGURATION
+
+The Celery app is configured in `tasks/celery_app.py` with these load-bearing settings:
+
+```python
+task_acks_late = True
+    # Ack a task only after it completes (success or terminal failure).
+    # If a worker dies mid-task, Redis re-delivers the task to another worker.
+    # Combined with task idempotency (status check on entry), this means crashes do not
+    # silently lose work.
+
+worker_prefetch_multiplier = 1
+    # Workers fetch one task at a time. The Celery default (4) is dangerous for long film
+    # tasks: a worker that prefetches 4 process_film tasks holds 3 hostage while the first
+    # one runs its 2-hour FFmpeg pass. With prefetch=1, tasks are distributed fairly.
+
+broker_transport_options = {
+    "visibility_timeout": 10800,    # 3 hours.
+    # Must exceed the longest hard time_limit in the system (process_film @ 7200s).
+    # Without this, Redis re-delivers a still-running task to a second worker after the
+    # default visibility timeout expires — causing duplicate runs of a 2-hour film task.
+}
+
+task_default_queue = "notifications"
+    # Any task enqueued without an explicit queue lands here.
+    # Sentinel: if a heavy task ever lands on "notifications," something has been
+    # mis-routed. Heavy tasks always declare queue= explicitly in their @celery_app.task
+    # decorator.
+```
+
+These are reliability tunings, not performance knobs. Changing any of them changes the failure
+mode of the entire pipeline.
+
+**5-minute HTTP timeout on the Gemini SDK** is set in `services/ai/gemini.py::_get_dev_client()`:
+
+```python
+client = genai.Client(http_options=types.HttpOptions(timeout=300_000))
+# 300_000 milliseconds = 5 minutes.
+```
+
+The SDK default (~60s) is too short for Prompt 0A on a long chunk and for Prompt 0B on a large
+concatenated extraction bundle. Without the override, `RemoteDisconnected('Remote end closed
+connection without response')` burns retries silently. Do not remove this override.
 
 ---
 
@@ -120,8 +188,8 @@ task sit in the queue retrying for minutes while the coach waits to see that the
     queue="film_processing",
     max_retries=3,
     default_retry_delay=30,
-    soft_time_limit=3300,
-    time_limit=3600,
+    soft_time_limit=7000,    # ~117 min — Docker FFmpeg compression is slow without HW accel
+    time_limit=7200,         # 120 min hard kill
     acks_late=True,
 )
 def process_film(self, film_id: str):
@@ -184,7 +252,7 @@ def process_film(self, film_id: str):
 **Error handling:**
 ```python
 except SoftTimeLimitExceeded:
-    update_film_status(film_id, "error", "Processing timed out after 55 minutes")
+    update_film_status(film_id, "error", "Processing timed out after 120 minutes")
     write_dead_letter(task_name="process_film", ...)
     raise
 
@@ -226,18 +294,24 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
 **Full execution sequence:**
 
 ```
-1.  Fetch chunk from DB. If gemini_file_state = 'active' and extraction_output IS NOT NULL:
-    return immediately (idempotency).
-2.  Upload chunk from R2 to Gemini File API:
-    a. Download chunk from R2 to /tmp/{film_id}_chunk_{chunk_index:03d}.mp4
+1.  Fetch chunk from DB.
+    Partial-state resume: if gemini_file_state = 'active' and extraction_status = 'complete'
+    and extraction_output IS NOT NULL → return immediately (full idempotency).
+    If gemini_file_state = 'active' but extraction_status != 'complete' → skip step 2,
+    reuse the existing Gemini file URI, and run Prompt 0A against it. (Avoids re-uploading
+    the chunk if only Prompt 0A failed.)
+2.  Upload chunk from R2 to Gemini File API (or GCS on Vertex backend):
+    a. Acquire 'gemini-file-api' rate-limit slot (Redis token bucket).
+    b. Download chunk from R2 to /tmp/{film_id}_chunk_{chunk_index:03d}.mp4
        Track in tmp_files.
-    b. Upload to Gemini File API: files.create(path)
-    c. Poll until file.state = ACTIVE (max 5 min, poll every 10 sec)
-    d. UPDATE film_chunks SET
+    c. Upload to Gemini File API: files.create(path)
+       (Or upload to gs://tex-film-chunks-{env}/chunks/{film_id}/{filename} on Vertex.)
+    d. Poll until file.state = ACTIVE (max 5 min, poll every 10 sec)
+    e. UPDATE film_chunks SET
          gemini_file_uri = {uri},
          gemini_file_state = 'active',
-         gemini_file_expires_at = {expireTime}
-3.  Acquire Gemini rate limit slot (token bucket via Redis)
+         gemini_file_expires_at = {expireTime}     -- year 9999 on Vertex/GCS
+3.  Acquire 'gemini-2.5-pro' rate-limit slot for the Prompt 0A call.
 4.  Run chunk extraction prompt (Prompt 0A):
     prompt = load_prompt("chunk_extraction")
     prompt = inject_chunk_metadata(prompt, chunk_index, total_chunks,
@@ -251,11 +325,9 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
 5.  UPDATE film_chunks SET
       extraction_output = {extraction_output},
       extraction_status = 'complete'
-6.  Check if all chunks for this film_id have extraction_status = 'complete':
-    SELECT COUNT(*) FROM film_chunks
-    WHERE film_id = {film_id} AND extraction_status != 'complete'
-    If count = 0: enqueue run_chunk_synthesis.delay(film_id)
-    (Only the last chunk to complete triggers synthesis — checked atomically)
+6.  Atomic last-chunk-completes detection (see below):
+    Take a per-film advisory lock. Check whether any film_chunks rows for this film
+    have extraction_status != 'complete'. If none remain, enqueue run_chunk_synthesis.
 ```
 
 **Atomic last-chunk detection:**
@@ -277,10 +349,24 @@ with get_connection() as conn:
                 run_chunk_synthesis.delay(film_id)
 ```
 
-**Error handling on Gemini upload failure:**
-If the Gemini File API upload fails after 3 retries, mark the chunk:
-`UPDATE film_chunks SET gemini_file_state = 'failed', extraction_status = 'failed'`
-Synthesis proceeds with available chunks and notes the missing chunk.
+**Error handling on Gemini upload failure — first-failure-wins atomicity:**
+When a chunk task exhausts its retries, it must not silently fail; the film should
+transition to `error` so the coach gets a notification — but only **once**, even if several
+chunks fail near-simultaneously. `_fail_film_from_chunk` does this with a conditional UPDATE:
+
+```python
+def _fail_film_from_chunk(film_id, error_message):
+    UPDATE film_chunks SET gemini_file_state = 'failed',
+                           extraction_status = 'failed' WHERE id = {chunk_id};
+    UPDATE films SET status = 'error', error_message = %s
+        WHERE id = %s AND status NOT IN ('error', 'processed')
+        RETURNING id;
+    # Only the first chunk to fail receives a returned row.
+    # That chunk's task is the one that enqueues notify_coach.
+    # Subsequent failing chunks find the row already in 'error' and do not duplicate.
+```
+
+This prevents a film with 5 simultaneously-failing chunks from firing 5 coach notifications.
 
 ---
 
@@ -321,42 +407,40 @@ def run_chunk_synthesis(self, film_id: str):
         prompt=load_prompt("chunk_synthesis"),
         section_type="chunk_synthesis"
     )
-    Flash is used for Prompt 0B because it is a text-only synthesis over chunk extractions, and Flash's text quality is sufficient. This may be revisited against golden-set grading — see TRAINING.md.
-6.  INSERT INTO film_analysis_cache (file_hash, film_id, sections={}, synthesis_document,
-                                      prompt_version)
+    Flash is used for Prompt 0B because it is a text-only synthesis over chunk extractions,
+    and Flash's text quality is sufficient for the synthesis task. May be revisited against
+    golden-set grading — see TRAINING.md and the post-eval reconciliation tracked in Issue #28.
+    The 5-minute HTTP timeout override in `services/ai/gemini.py::_get_dev_client` is required
+    here — the default ~60s SDK timeout is too short for Prompt 0B on a large extraction bundle.
+6.  INSERT INTO film_analysis_cache (file_hash, film_id, sections='{}'::jsonb,
+                                      synthesis_document, prompt_version)
     ON CONFLICT (file_hash) DO UPDATE SET synthesis_document = EXCLUDED.synthesis_document
-    (sections{} is empty at this point — filled after report generation completes)
+    (sections is inserted as '{}' placeholder — the column is NOT NULL. Real section outputs
+     are written later by run_synthesis_sections.)
 7.  UPDATE films SET status = 'processed', updated_at = now()
-8.  If film has a pending report that is cleared for generation:
-      SELECT reports.id FROM reports
-      JOIN report_films ON report_films.report_id = reports.id
-      LEFT JOIN payments ON payments.report_id = reports.id
-      WHERE report_films.film_id = {film_id}
-        AND reports.status = 'pending'
-        AND (
-          payments.id IS NULL             -- free or credit path: no payment row expected
-          OR payments.status = 'complete' -- paid path: payment must be confirmed complete
-        )
-    For each matching report_id: generate_report.delay(report_id)
-    (Auto-trigger only if payment is confirmed or no payment is required.
-    A report with a payments row in status = 'pending' means the coach abandoned checkout —
-    do not generate. The Stripe webhook will trigger generation if they complete payment later.)
+    Done. run_chunk_synthesis does NOT enqueue generate_report. The coach (or the Stripe
+    webhook, on paid path) initiates report generation explicitly via POST /reports —
+    automatic post-synthesis report triggering is not implemented today.
 ```
 
-**Graceful degradation on synthesis failure:**
-If synthesis fails after 2 retries, do not block report generation.
-Set `films.status = 'processed'` and note in a `synthesis_failed` column.
-Sections 1-4 run without the synthesis document, receiving only raw video and roster.
-This is worse output quality but not a blocked report.
+**Synthesis failure path — no graceful degradation:**
+If Prompt 0B fails after all retries, the film transitions to `status='error'` and is not
+usable for report generation. Sections 1-4 depend on the synthesis document under
+synthesis-only mode — without it, there is no text context to feed them. (See D-025 for
+the rationale: the original "degrade gracefully" design was specified for the old
+video-fed-sections architecture and does not apply once sections 1-4 are text-only.)
+The `films.synthesis_failed` column exists in the schema but is currently unused; it will
+be dropped in a future migration.
 
 ---
 
 ## TASK: generate_report
 
 **Queue:** `report_generation`
-**Enqueued by:** FastAPI Stripe webhook handler (after payment confirmed), or `run_chunk_synthesis`
-  (auto-trigger if report was pending), or directly by FastAPI (free/credit path)
-**Triggers:** Celery chord of 4 `run_section` tasks + `run_synthesis_sections` callback
+**Enqueued by:** FastAPI Stripe webhook handler (after payment confirmed) or directly by
+  FastAPI's `POST /reports` (free/credit path). `run_chunk_synthesis` does **not** auto-trigger.
+**Triggers:** Celery chord of 4 `run_section` tasks + `run_synthesis_sections` callback,
+  OR (on a section-cache hit) `run_synthesis_sections` directly with `chord_results=None`.
 
 ```python
 @celery_app.task(
@@ -375,29 +459,39 @@ def generate_report(self, report_id: str):
 **Full execution sequence:**
 
 ```
-1.  Set Sentry context: report_id, user_id
+1.  Set Sentry context: report_id, user_id (target — see Rule 4)
 2.  Fetch report. If status in ('complete', 'partial', 'error'): return (idempotency).
 3.  UPDATE reports SET status = 'processing'
 4.  Fetch film_ids from report_films WHERE report_id = {report_id}
 5.  Verify all films have status = 'processed'.
     If any film is still 'processing': raise self.retry(countdown=60)
     (Retry in 60 seconds — film may still be processing)
-6.  Call get_valid_chunk_uris(conn, film_id) for each film.
-    Re-uploads expired chunks from R2 if any URIs expire within 1 hour.
-7.  Fetch synthesis_document from film_analysis_cache for each film.
-8.  Fetch roster for the team.
-9.  Build context cache input:
-    - All valid chunk URIs (across all films)
-    - Synthesis document(s)
-    - Roster text
-10. Acquire Gemini rate limit slot.
-11. Create Gemini context cache:
-    cache = provider.create_context_cache(chunk_uris, synthesis_text, roster_text, ttl=3600)
-    cache_uri = cache.name
-    Save cache_uri to reports.context_cache_uri (new column — add to schema migration)
-12. INSERT INTO report_sections for all 6 sections with status = 'pending'
+6.  SECTION-CACHE SHORT-CIRCUIT (single-film reports only):
+    Call _try_section_cache_hit(report_id, film_id, current_composite_prompt_version):
+      SELECT sections FROM film_analysis_cache
+      WHERE file_hash = {hash} AND prompt_version = {composite}
+    If the row exists and sections is non-empty:
+      - INSERT INTO report_sections for sections 1-4 with the cached content,
+        model_used='cached', tokens_input=0, tokens_output=0, generation_time_seconds=0.
+      - INSERT INTO report_sections for sections 5-6 with status='pending'.
+      - Enqueue run_synthesis_sections.delay(chord_results=None, report_id=report_id,
+                                            cache_uri="") and return.
+    The chord is never built. Sections 5-6 still run because their output depends on this
+    report's coach/roster/intent.
+7.  (Cache miss path)
+    Call get_valid_chunk_uris(conn, film_id) for each film.
+    Re-uploads expired chunks from R2 if any URIs expire within 1 hour (Developer API only).
+    Vertex/GCS path is a no-op — GEMINI_BACKEND=vertex short-circuits in uri_expiry.py.
+8.  Fetch synthesis_document from film_analysis_cache for each film.
+    Format roster as text via services/roster_format.py.
+9.  Build the synthesis-only text context:
+    services/ai/gemini.py::create_context_cache(synthesis_document, roster) returns a
+    "vertex:no-cache:<json>" sentinel — no Google CachedContent is created. The sentinel
+    encodes the text bundle sections 1-4 will receive.
+    Save cache_uri (the sentinel string) to reports.context_cache_uri.
+10. INSERT INTO report_sections for all 6 sections with status = 'pending'
     ON CONFLICT (report_id, section_type) DO UPDATE SET status = 'pending'
-13. Fire Celery chord:
+11. Fire Celery chord:
     chord(
         group(
             run_section.s(report_id, "offensive_sets",    cache_uri, prompt_version),
@@ -406,12 +500,16 @@ def generate_report(self, report_id: str):
             run_section.s(report_id, "player_pages",      cache_uri, prompt_version),
         )
     )(run_synthesis_sections.s(report_id, cache_uri))
-14. generate_report returns here. All further work happens in run_section tasks
-    and the run_synthesis_sections callback.
+12. generate_report returns. All further work happens in run_section tasks and the
+    run_synthesis_sections callback.
 ```
 
 **Important:** `generate_report` does not wait for the chord to complete. It fires the chord
 and returns. The chord callback (`run_synthesis_sections`) handles everything after sections 1-4.
+
+The section-cache short-circuit (step 6) is what makes report regeneration of unchanged films
+near-free in dollar terms — only sections 5-6 incur Gemini cost on a hit, and `cache_uri=""`
+signals to `run_synthesis_sections` that there is no Google cache to delete on cleanup.
 
 ---
 
@@ -493,64 +591,68 @@ statuses and proceeds with whatever completed successfully.
     time_limit=720,
     acks_late=True,
 )
-def run_synthesis_sections(self, chord_results: list, report_id: str, cache_uri: str):
+def run_synthesis_sections(self, chord_results, report_id: str, cache_uri: str):
+    # chord_results may be None when invoked via the section-cache short-circuit
+    # (no chord was built — see generate_report step 6).
 ```
 
 **Full execution sequence:**
 
 ```
 try:
-1.  Set Sentry context: report_id
+1.  Set Sentry context: report_id (target — see Rule 4)
 2.  Fetch all 6 section rows for this report.
+    (Sections 1-4 are already terminal: 'complete', 'error', or 'cached' via short-circuit.)
 3.  Count errored sections from sections 1-4.
-    If all 4 sections errored: skip to step 9 (no context for synthesis)
+    If all 4 sections errored: skip to step 9 (no context for synthesis).
 4.  Build synthesis context from completed sections 1-4:
     context = build_synthesis_context(sections_1_4)
     Includes any [CONFIRMED]/[LIKELY]/[SINGLE GAME SIGNAL] tags from synthesis document.
 5.  Run section 5 — Game Plan (Gemini Flash, fallback Claude):
-    game_plan_content = run_text_section(report_id, "game_plan", context)
+    game_plan_content = _run_text_section(report_id, "game_plan", context)
     Saves to report_sections on completion.
 6.  Build section 6 context (sections 1-4 + section 5):
     context_with_game_plan = context + f"\n\nGAME PLAN:\n{game_plan_content}"
 7.  Run section 6 — Adjustments + Practice Plan (Gemini Flash, fallback Claude):
-    run_text_section(report_id, "adjustments_practice", context_with_game_plan)
+    _run_text_section(report_id, "adjustments_practice", context_with_game_plan)
     Saves to report_sections on completion.
-8.  Write film_analysis_cache sections 1-4:
+8.  Cache write (only on cache-miss path — short-circuit already had cache):
     UPDATE film_analysis_cache SET sections = {sections_1_4_content}
-    WHERE file_hash = {film.file_hash} AND prompt_version = {current_version}
+    WHERE file_hash = {film.file_hash} AND prompt_version = {composite_version}
     Enqueue: assemble_and_deliver.delay(report_id)
     Return.
-9.  (All sections 1-4 errored path)
+9.  (All sections 1-4 errored path) — _handle_all_sections_errored:
     Update reports.status = 'error'
     apply_failure_credit(user_id, report_id)
-    Enqueue: notify_coach.delay(report_id=report_id, type='report_failed_credit_applied')
+    Enqueue: notify_coach.delay(report_id=report_id, notification_type='report_failed_credit_applied')
     Return.
 
 finally:
-10. Delete Gemini context cache — runs on every exit path: success, partial, full failure, or exception.
-    if cache_uri:
+10. Cache cleanup — runs on every exit path: success, partial, full failure, or exception.
+    if cache_uri and not cache_uri.startswith("vertex:no-cache:") and cache_uri != "":
         try:
             provider.delete_context_cache(cache_uri)
         except Exception:
-            log.warning(f"Cache deletion failed for {cache_uri} — will be caught by weekly maintenance")
-        UPDATE reports SET context_cache_uri = NULL WHERE id = {report_id}
+            log.warning(f"Cache deletion failed for {cache_uri} — orphan caches must be purged manually until Issue #29 wires maintenance")
+    UPDATE reports SET context_cache_uri = NULL WHERE id = {report_id}
 ```
 
-**Context cache deletion is in `finally` — not inline:**
-The cache deletion (step 10) runs in a `finally` block, not in the main execution sequence.
-This guarantees it fires on every exit path: normal completion, partial failure, full failure,
-unhandled exception, and retry. Placing it inline (as step 5 previously) meant any exception
-before that step left the cache alive indefinitely, bleeding Gemini storage costs.
+**Why the synthesis-only sentinel skips the delete call:**
+In synthesis-only mode, `create_context_cache` returns a local `vertex:no-cache:<json>`
+sentinel string. No Google CachedContent was created at report-generation time, so there's
+nothing to delete on cleanup. The conditional check on the prefix avoids a no-op call (and
+the warning log) on every report. The section-cache-short-circuit path passes `cache_uri=""`
+for the same reason.
 
-The inner `try/except` on the delete call is intentional — a failed deletion should never
-block report delivery or error the task. It logs a warning and moves on. The weekly maintenance
-task (`files.list` + delete anything older than 24 hours not referenced by an active report)
-is the backstop for any caches that slip through after all retries are exhausted.
+If/when Google's context caching becomes viable again and `create_context_cache` resumes
+calling the real CachedContent API, the `finally` block above is what guarantees the cache
+gets cleaned up on every exit path — normal completion, partial failure, full failure,
+unhandled exception, and retry.
 
-**`run_text_section` with Flash → Claude fallback:**
+**`_run_text_section` with Flash → Claude fallback:**
 
 ```python
-def run_text_section(report_id: str, section_type: str, context: str) -> str:
+def _run_text_section(report_id: str, section_type: str, context: str) -> str:
     prompt_text, version = load_prompt(section_type)
     try:
         acquire_gemini_slot("gemini-2.5-flash")
@@ -560,7 +662,10 @@ def run_text_section(report_id: str, section_type: str, context: str) -> str:
                      model_used="gemini-2.5-flash", prompt_version=version)
         return content
     except Exception as e:
-        log_fallback_event(report_id, section_type, "gemini_flash", "claude_sonnet", str(e))
+        log.warning("Flash failed for section %s — falling back to Claude: %s",
+                    section_type, e)
+        # fallback_events table exists but is NOT written today —
+        # see ARCHITECTURE.md AI FALLBACK STRATEGY and Issue #27.
         fallback = get_fallback_provider()
         content = fallback.analyze_text(context, prompt_text, section_type)
         save_section(report_id, section_type, content,
@@ -593,22 +698,21 @@ def assemble_and_deliver(self, report_id: str):
 **Full execution sequence:**
 
 ```
-1.  Set Sentry context: report_id, user_id
-2.  Fetch report. If status in ('complete', 'partial'): return (idempotency).
+1.  Set Sentry context: report_id, user_id (target — see Rule 4)
+2.  Fetch report. If status in ('complete', 'partial', 'error'): return (idempotency).
 3.  Fetch all 6 sections from report_sections.
 4.  Count errored sections:
       error_count = len([s for s in sections if s['status'] == 'error'])
-    If error_count == 6: → full failure path (step 10)
-    If 1 <= error_count <= 5: → partial report path
-    If error_count == 0: → complete report path
-5.  Assemble PDF:
+    If error_count == 6: → full failure path (step 10). PDF is NOT assembled.
+    If 1 <= error_count <= 5: → partial report path. PDF assembled with placeholder pages.
+    If error_count == 0: → complete report path.
+5.  Assemble PDF (only if error_count < 6):
     pdf_bytes = assemble_pdf(
         sections=sections,          # errored sections get placeholder page
         team_name=team.name,
         report_date=today(),
         is_partial=(error_count > 0)
     )
-    Report status will be 'partial' if any section errored.
 6.  Upload PDF to R2:
     key = f"reports/{user_id}/{report_id}/scouting_report.pdf"
     upload_to_r2(bucket=BUCKET_REPORTS, key=key, data=pdf_bytes)
@@ -620,18 +724,29 @@ def assemble_and_deliver(self, report_id: str):
 8.  Delete Gemini file URIs (chunk files — no longer needed):
     For each chunk in film_chunks WHERE film_id in {report film_ids}:
       provider.delete_video(chunk.gemini_file_uri)
-      UPDATE film_chunks SET gemini_file_state = 'deleted'
+      UPDATE film_chunks SET gemini_file_state = 'deleted'    -- audit row retained
 9.  Delete R2 chunk files:
     For each chunk: delete_from_r2(bucket=BUCKET_FILMS, key=chunk.r2_chunk_key)
     ONLY after reports.status is confirmed written. Never before.
-10. (Full failure path — error_count == 6)
+    Enqueue: notify_coach.delay(report_id=report_id,
+             notification_type='report_complete' if error_count == 0 else 'report_partial')
+    Return.
+10. (Full failure path — error_count == 6) — duplicate of _handle_all_sections_errored.
     UPDATE reports SET status = 'error'
     apply_failure_credit(user_id, report_id)
-    Enqueue: notify_coach.delay(report_id=report_id, type='report_failed_credit_applied')
+    Enqueue: notify_coach.delay(report_id=report_id,
+             notification_type='report_failed_credit_applied')
+    Note: this path is reached when every section in the chord errored AND the section-cache
+    short-circuit did not fire (because the cache also held no usable sections). The same
+    failure-credit logic also runs in run_synthesis_sections step 9 — both paths are correct
+    duplicates rather than a single function call, because the trigger condition differs
+    (chord-side full failure vs assembly-side full failure on a partial state).
     Return.
-11. Enqueue: notify_coach.delay(report_id=report_id,
-             type='report_complete' if error_count == 0 else 'report_partial')
 ```
+
+Note the `notification_type` kwarg on the notify_coach call — the parameter name is
+`notification_type`, not `type` (which is a reserved Python builtin). Every call site uses
+the explicit `notification_type=` keyword.
 
 **PDF assembly with errored sections:**
 `assemble_pdf()` accepts sections regardless of status. An errored section renders as:
@@ -669,20 +784,21 @@ than a complete failure with no PDF.
     acks_late=True,
 )
 def notify_coach(self, report_id: str = None, film_id: str = None,
-                 type: str = "report_complete"):
+                 notification_type: str = "report_complete"):
+    # Note: kwarg is notification_type, NOT type (type is a Python builtin).
+    # Every call site uses notify_coach.delay(notification_type=...).
 ```
 
-**Notification types and messages:**
+**Notification types and messages (match `notifications.py` verbatim):**
 
 ```python
 NOTIFICATION_MESSAGES = {
-    "report_complete": "Your scouting report is ready. Download it now.",
-    "report_partial":  "Your report is ready with {n} of 6 sections complete. "
-                       "One or more sections could not be generated.",
+    "report_complete":              "Your scouting report is ready. Download it now.",
+    "report_partial":               "Your report is ready with some sections incomplete.",
     "report_failed_credit_applied": "Your report could not be completed. "
                                     "A free report credit has been added to your account.",
-    "film_error":      "Your film could not be processed: {error_message}. "
-                       "Please re-upload or contact support.",
+    "film_error":                   "Your film could not be processed: {error_message}. "
+                                    "Please re-upload or contact support.",
 }
 ```
 
@@ -690,8 +806,9 @@ NOTIFICATION_MESSAGES = {
 
 ```
 1.  Fetch user_id from report or film (whichever is provided).
-2.  Build message from NOTIFICATION_MESSAGES[type].
+2.  Build message from NOTIFICATION_MESSAGES[notification_type].
 3.  INSERT INTO notifications (user_id, report_id, type, message)
+    Note: the table column is named 'type'; the task kwarg is 'notification_type'.
 4.  Return. Nothing else. One DB write. That is the entire task.
 ```
 
@@ -787,21 +904,34 @@ film or report row is corrupted or missing. See D-009.
 ## TASK INTERACTION MAP
 
 ```
-FastAPI POST /films
+FastAPI POST /films/upload-complete
     └── process_film (film_processing)
             └── extract_chunk × N (film_processing, parallel)
-                    └── [last chunk completes] run_chunk_synthesis (film_processing)
-                            └── [auto-trigger if report pending] generate_report (report_generation)
+                    └── [last chunk completes — atomic via pg_try_advisory_xact_lock]
+                        run_chunk_synthesis (film_processing)
+                              └── writes synthesis_document; sets films.status='processed'.
+                                  Does NOT enqueue generate_report — that's a separate trigger.
 
-FastAPI POST /reports (free/credit path)
-    └── generate_report (report_generation)
-
-Stripe webhook checkout.session.completed
-    └── generate_report (report_generation)
-            └── chord: [run_section × 4] (section_generation, parallel)
-                    └── [chord callback] run_synthesis_sections (report_generation)
-                            └── assemble_and_deliver (report_generation)
-                                    └── notify_coach (notifications)
+FastAPI POST /reports (free/credit path)         ─┐
+Stripe webhook checkout.session.completed (paid) ─┴── generate_report (report_generation)
+                                                       │
+       ┌─ section-cache hit (single-film, prompt_version match) ─┐
+       │  Sections 1-4 served from film_analysis_cache.sections; │
+       │  chord skipped; runs run_synthesis_sections directly    │
+       │  with chord_results=None, cache_uri="".                 │
+       │                                                          │
+       └─ cache miss ──→ chord: [run_section × 4] (section_generation, parallel)
+                              │ each calls analyze_video_cached() which unpacks the
+                              │ vertex:no-cache:<json> sentinel — text Parts only.
+                              ▼
+                        [chord callback] run_synthesis_sections (report_generation)
+                              │ runs section 5 then section 6 (Flash; Claude fallback).
+                              │ writes sections 1-4 to film_analysis_cache.sections.
+                              ▼
+                        assemble_and_deliver (report_generation)
+                              │ PDF → R2 → reports.status terminal → cleanup.
+                              ▼
+                        notify_coach (notifications)
 ```
 
 Every path eventually terminates at `notify_coach`. That is the only terminal task.
@@ -888,5 +1018,11 @@ generating sections in parallel.
 
 ---
 
-*Last updated: April 1, 2026 — Phase 0, context engineering*
-*9 tasks defined. 4 queues. All retry policies, timeouts, and interaction maps complete.*
+*Last updated: 2026-05-19 — task count corrected to 8; process_film timeouts at 117/120 min*
+*(D-026); synthesis-only mode reflected in run_synthesis_sections cache cleanup; run_chunk_synthesis*
+*auto-trigger removed (not implemented); graceful synthesis degradation removed (D-025); section-cache*
+*short-circuit, first-failure-wins atomicity, extract_chunk partial-state resume, and dual-backend*
+*Vertex/GCS short-circuit documented; notify_coach kwarg corrected to notification_type; backoff*
+*formulas corrected; Celery app config + 5-min Gemini HTTP timeout documented; Sentry Rule 4*
+*marked deferred to Issue #29.*
+*8 tasks defined. 4 queues. All retry policies, timeouts, and interaction maps current.*

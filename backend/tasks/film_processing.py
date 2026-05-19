@@ -449,13 +449,13 @@ def process_film(self, film_id: str):
             task_name="process_film",
             task_args={"film_id": film_id},
             queue="film_processing",
-            error_message="Processing timed out after 55 minutes",
+            error_message="Processing timed out after 120 minutes",
             error_tb=traceback.format_exc(),
             retry_count=self.request.retries,
             film_id=film_id,
             user_id=user_id,
         )
-        _update_film_status(film_id, "error", "Processing timed out after 55 minutes")
+        _update_film_status(film_id, "error", "Processing timed out after 120 minutes")
         raise
 
     except (FilmValidationError, FFmpegError) as exc:
