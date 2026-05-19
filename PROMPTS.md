@@ -15,19 +15,32 @@ always, and run the eval questions in EVALS.md against any changed prompt before
 ## HOW PROMPTS ARE LOADED
 
 ```python
-# services/prompts.py
+# services/prompts.py (canonical — copy this to verify edits)
 def load_prompt(section_type: str) -> tuple[str, str]:
-    path = f"backend/prompts/{section_type}.txt"
-    with open(path) as f:
-        raw = f.read()
-    lines = raw.split("\n")
-    version = lines[0].replace("VERSION: ", "").strip()
-    prompt_text = raw.split("---\n", 1)[1].strip()
+    """Load a prompt file and return (prompt_text, version)."""
+    path = PROMPTS_DIR / f"{section_type}.txt"
+    if not path.exists():
+        raise FileNotFoundError(f"Prompt file not found: {path}")
+
+    raw = path.read_text()
+    first_line, _, rest = raw.partition("\n")
+    if not first_line.startswith("VERSION:"):
+        raise ValueError(f"Prompt file {path} missing VERSION header")
+    version = first_line.replace("VERSION:", "").strip()
+
+    # Split on --- delimiter — must be on its own line (with a preceding newline).
+    parts = raw.split("\n---\n", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Prompt file {path} missing --- delimiter")
+    prompt_text = parts[1].strip()
+
     return prompt_text, version
 ```
 
-The `---` delimiter separates the version header from the prompt body. Everything below `---` is
-sent to Gemini verbatim. No pre-processing except roster injection for sections 1-4 (see below).
+The `---` delimiter must be on its own line **with a preceding newline** — the loader splits on
+`"\n---\n"`, not `"---\n"`. Everything below the delimiter is sent to Gemini verbatim. No
+pre-processing except roster injection for sections 1-4 and `{chunk_index}` / `{total_chunks}` /
+`{start_min}` / `{end_min}` substitution for Prompt 0A.
 
 ---
 
@@ -171,21 +184,79 @@ The synthesis document is stored in **`film_analysis_cache`** and keyed by **`fi
 
 **File:** `backend/prompts/chunk_extraction.txt`
 
-**Canonical text (2026-05-14):** The live prompt in git is the source of truth — **`VERSION: v1.5`** on disk. The fenced copy below is the **v1.0 baseline** mirror from early Phase 2; it does **not** include later rules (e.g. **REACTIVE-VS-ZONE** tagging, explicit thin-sample language for ball-screen coverage). Read the **`.txt`** file before judging production behavior.
+**Canonical text (2026-05-19):** The live prompt in git is the source of truth — **`VERSION: v1.6`** on disk. The fenced copy below is a verbatim mirror of `backend/prompts/chunk_extraction.txt` as of this update. If the `.txt` file is bumped (e.g. v1.7), the mirror here MUST be updated in the same PR — the cache key derives from the `.txt` headers, not from this doc.
 
 ```
-VERSION: v1.5 (see .txt file — mirror below is v1.0 baseline only)
+VERSION: v1.6
 CHANGELOG:
-  v1.5 — REACTIVE-VS-ZONE tag; ball-screen coverage thin-sample language when opponent PnR sample is small; other reconciliation hygiene (see ROADMAP 2026-05-13).
-  v1.0 — Initial version (body below).
+  v1.6 — Canonical geometry for 5-out vs 1-4 flat/high PnR; forbid burying high PnR in generic 5-out; transition vs fast bring-up tempo block; two-layer defended PnR (big + ball defender); score sources + no bogus final; opponent standout trigger; OOB formation sweep; mandatory segment N for defended PnRs.
+  v1.5 — Reactive-vs-zone tag on offense (splits zone answers from base half-court sets in synthesis); chunk cue for 2-2-1 / guards-up vs zone shell.
+  v1.4 — Roster spelling enforced character-for-character; Horns vs 5-out disambiguation; zone shell cues; opponent never gets invented names; transition count definition tightened; sub reporting tied to roster.
+  v1.3 — Named-set discipline (Horns / 1-4 flat vs generic 5-out); opponent zone + standout vs scouted D; scoreboard reconciliation; subs/injury; thin-sample caveats for PnR defense.
+  v1.2 — Paired with `chunk_synthesis` for `film_analysis_cache` key (see `services/prompt_versions.py`).
+  v1.1 — Roster sent inline ({roster}); chunk index/total and segment minute window injected by worker.
+  v1.0 — Initial version.
 ---
 You are analyzing one segment of a complete basketball game film.
-This segment is chunk {chunk_index} of {total_chunks}, covering approximately minutes {start_min} to {end_min}.
-The full game roster is provided in context.
+This segment is chunk {chunk_index} of {total_chunks}, covering approximately minutes {start_min} to {end_min} of game film runtime (elapsed minutes from the start of the full uploaded video — not necessarily the arena scoreboard clock).
+
+ROSTER for the team being scouted (authoritative):
+Copy **every scouted-team player name from the roster block below exactly** — same spelling and punctuation — in every PLAYERS line and every #[JERSEY] [NAME] block. If the announcer uses a different spelling or nickname, keep the **roster** spelling and note the announcer under FLAGGED OBSERVATIONS. Do not "correct" the roster line to match the announcer.
+
+You do NOT have the opponent’s roster. For opponent players:
+  • Use the form **opponent #[N]** in all standouts and defensive notes.
+  • You may add a **heard-only** tag in parentheses: `opponent #0 (announcer said "Pemberton")` — do **not** invent or guess last names you did not clearly hear tied to that number. Never write opponent names as if they were verified facts.
+
+{roster}
 
 Your job is to produce a structured observation log of everything that happens in this segment.
 This is a perception task only. Do not interpret, strategize, or draw conclusions.
-Document what you see. Use precise counts. Use jersey numbers from the roster.
+Document what you see. Use precise counts. Use jersey numbers and **exact** roster names for the scouted team only.
+
+CANONICAL TEX LABELS (geometry — use these names so synthesis can aggregate; do not collapse different pictures into one bucket):
+
+  **5-out:** All **five** offensive players are clearly **outside / above the three-point arc** as the **stable** half-court setup for that possession — no traditional low-post focal point anchoring the offense. If the set is only briefly wide before a different structure appears, label the **dominant** structure, not generically "5-out."
+
+  **1-4 flat / high ball screen (or high PnR):** **One** initiator with the ball (top or wing entry) and **four** teammates **spaced across the perimeter** (wings, corners, arc — a **flat / spread** look relative to the paint), with the **primary on-ball screen at or above the free-throw line extended** toward the arc. This is **NOT** the same label as Horns (no required dual elbow anchors). **Critical:** Do **not** count these possessions **only** under **"5-out motion"** with a NOTE about a screen — give **this** structure its **own ACTION line** and **COUNT** when it is the main half-court look.
+
+  **Horns / Horns DHO:** (see below — unchanged meaning)
+
+HORNS vs GENERIC SPREAD:
+  Label **Horns** (or **Horns / DHO**) when you see the **common Horns shape**: two elbow (or high-post) anchors, ball started by a guard at the top, screening/handoff action involving the elbow players—not merely "five players spaced."
+  Do **not** call that package **only** "5-out motion." You may log a **second** ACTION line for perimeter spacing within the same possession if needed, but Horns deserves its own **COUNT** when that structure is visible.
+
+ANTI-BUCKETING (mandatory):
+  It is **forbidden** to use a fat **ACTION: 5-out motion** row to **absorb** possessions whose **dominant** structure was **Horns**, **1-4 flat / high PnR**, or **distinct motion continuity** documented elsewhere — unless every possession in that COUNT **actually** satisfies **5-out geometry** above. When a possession starts spaced then becomes a clear high pick-and-roll / flat entry, classify by the **half-court family** (**1-4 flat / high ball screen**), not vague "spread."
+
+MULTIPLE BALL SCREENS IN ONE POSSESSION:
+  Count the **primary** initiating structure once for the ACTION **COUNT**. Additional picks in the same trip → mention in **NOTES** ("second screen," "counter") unless a second distinct tactical entry is visibly a new set restart.
+
+HALF-COURT OFFENSIVE LABELING (scouted team on offense):
+  Use standard coaching vocabulary. When you can see a named structure, use a **specific** label — do **not** default everything to generic "5-out motion" or "spread PnR" if a tighter name fits.
+  Prefer separate ACTION lines when these are visibly distinct in this segment:
+    • Horns / Horns DHO (two elbow anchors — see above)
+    • **1-4 flat / high pick-and-roll** or **high ball-screen series** (canonical geometry above)
+    • 4-out 1-in, motion, pass-and-cut continuity, or canonical **5-out** spacing (only **5-out** when all five match the canonical definition above)
+    • Transition / early offense (own basket break — see counting rules below)
+  If you are unsure between two labels, describe the frame (e.g. "two bigs at elbows, guard initiates from top") and pick the best match, or flag uncertainty.
+
+REACTIVE VS OPPONENT ZONE (offense — tagging):
+  When the possession is **primarily an answer to opponent zone** (e.g. two guards high vs a 1-2-2 shell, 2-2-1 / "guards up," overload to a short corner, repeated **attacks to the middle of the zone** after the defense has shown a zone shell), keep your ACTION label honest (often still "1-4 flat / high ball screen" or "motion") but add to **NOTES** the exact token **`REACTIVE-VS-ZONE`** plus one short cue (e.g. "vs 1-2-2"). This is **not** their default half-court identity — it is a counter look. Omit the tag only if you truly cannot tell man from zone.
+
+TRANSITION COUNT (strict):
+  Count **Transition / early offense** only when the scouted team **clearly pushes to attack** before the defense sets — e.g. after a steal, long rebound, or clear outlet with numbers, and the possession **starts** in first ~6–8 seconds of the shot clock or equivalent hurry-up pace.
+  After a **made basket** by the opponent, a slow dribble-up or casual reversal is **not** transition unless they **attack quickly** with a pass ahead or sprint clearly intended to score early. When in doubt, log as half-court and flag under FLAGGED.
+
+FAST BRING-UP ≠ TRANSITION (same segment — both matter):
+  **Transition** counts only the strict definition above.
+  Separately observe **fast pace / hurried advance** where the defense **gets matched** and the offense runs a **normal half-court set** (often a quick entry pass then **late shot clock or organized action**). **Do not** add those possessions to Transition **COUNT** — describe them in **OFFENSIVE TEMPO SUMMARY** below so synthesis can praise pace without inflating transition stats.
+  A **quick three** attempted after the defense has **organized** → usually **half-court** tempo, **not** transition unless the shot was clearly in the **immediate early-offense strike** window before matchup.
+
+OPPONENT DEFENSE (while scouted team has the ball):
+  If the opponent shows a **zone shell** — e.g. flat line across the lane, two guards high at the free-throw line (1-2-2 look), three across the paint (2-3), corners and wing filled with almost no man chasing through screens — name **zone** and the type if you can (1-2-2, 2-3, 3-2) or write **"zone (type uncertain)"**.
+  Note how the scouted team attacked it (overload, middle drive, quick three, set play). If you only see zone for one or two possessions, still log it with count and flag small sample.
+
+The video segment may be long; account for the full runtime from minute {start_min} through {end_min} — do not stop after only the first few minutes unless the video truly contains no further play.
 
 Output your observations in this exact structure. Use the headers exactly as written.
 Every section is required. If nothing was observed for a section, write "None observed in this segment."
@@ -196,29 +267,41 @@ Possessions observed: [total offensive possessions for each team in this segment
 
 --- OFFENSIVE ACTIONS (Team being scouted) ---
 For each offensive action observed, document:
-  ACTION: [name using standard coaching terminology — e.g., "Horns", "DHO series", "Spain PnR",
-           "5-out motion", "Pistol", "Floppy", "Pin-down", "Elevator", "UCLA cut"]
-           If you cannot identify the name: describe it structurally — e.g., "two-man action:
-           ball handler drives right off screen set by big at elbow"
+  ACTION: [name — see labeling rules above; examples: "Horns / Horns DHO", "1-4 flat / high ball screen", "high pick-and-roll",
+           "4-out 1-in / motion", "5-out motion", "transition / early offense", "BLOB quick hitter", "SLOB", etc.]
   COUNT: [exact number of times this action was run in this segment]
-  PLAYERS: [jersey numbers and names of initiators and key participants]
+  PLAYERS: [jersey numbers and **exact roster names** of initiators and key participants — scouted team only]
   OUTCOME: [success rate in this segment — how many produced good shots, scores, turnovers, stalls]
   NOTES: [anything unusual — counters off the action, situational use, variation observed]
 
 List every distinct action observed more than once.
 Single-occurrence actions: list at the end under "SINGLE-OCCURRENCE ACTIONS" with a one-line description.
+**Outbound / inbound formations:** Sweep stoppages for **BLOB/SLOB** (baseline or sideline). Log each distinct **formation** (4-across, stack, elbow popper, etc.) — repeat formations get a COUNT ≥ 2 in OFFENSIVE ACTIONS where possible.
+
+--- OFFENSIVE TEMPO SUMMARY (THIS SEGMENT ONLY) ---
+  Strict transition possessions (COUNT per rules above): [integer]
+  Fast ball advance → settled half-court (defense generally matched — **NOT** counted as transition above): [short frequency / examples]
+  Segment pace feel: [slow / moderate / fast]
 
 --- DEFENSIVE SCHEME (Team being scouted, on defense) ---
   BASE DEFENSE: [man-to-man / zone type / press — be specific]
   SCHEME CHANGES: [did they change defenses during this segment? when? what triggered it?]
-  BALL SCREEN COVERAGE: [drop / hedge / switch / ICE / blitz — observed in this segment]
+  **Defended opponent ball screens (scouted team on D) — quantify first:**
+    **Opponent ball-screen possessions evaluable this segment:** N = [integer; 0 if none / none on film]
+    If N ≥ 1, describe coverage using **two layers** (same clip can combine):
+      • **BIG (screen defender — typically the scouted big):** [drop / show / hard hedge / switch / trap / ICE-style attach / unclear]
+      • **BALL HANDLER’S DEFENDER:** [go over / under / ICE / switch / fight-through / trail / unclear]
+    **Switch** applies only if defenders **exchange matchups onto new offensive players.** A guard contesting a pull-up after fighting over — while the big stays back — is **not** automatically "switch;" use **mixed** or name **drop + contest** accurately.
+    If N < 4, append: **`thin sample in this segment — do not infer full-game primary coverage from this chunk alone.`**
+  If the opponent ran **few or no** ball screens in this segment, write **N=0** explicitly — do not invent identity.
   COVERAGE CHANGES: [did ball screen coverage change? on which players or in which situations?]
   TRANSITION DEFENSE: [how do they get back? who is their primary back-defender?]
   NOTABLE MOMENTS: [specific defensive stops or breakdowns worth flagging — jersey numbers]
+  OPPONENT STANDOUTS (vs scouted D): [only **opponent #[N]** format, optional (announcer "..."). **Mandatory content rule:** If any **opponent #[N]** in this segment shows **multiple** instances of **self-created offense** — off-the-dribble pull-ups, blow-bys creating separation for scores/FT — you **must** list them here with **opponent #[N]** and one-line factual evidence (**not** vague "hot hand"). If none qualify, write **"None standout this segment."** Never invent opponent full names per roster rules above.]
 
 --- INDIVIDUAL PLAYER OBSERVATIONS ---
-For each player who appeared in this segment, document observations:
-  #[JERSEY] [NAME]:
+For each player who appeared in this segment, document observations (rostered scouted team only):
+  #[JERSEY] [EXACT ROSTER NAME]:
     OFFENSE: [what they did — actions, tendencies, shots taken, results]
     DEFENSE: [how they defended — matchup, quality, breakdowns]
     COUNT: [approximately how many possessions they were on the floor]
@@ -226,26 +309,38 @@ For each player who appeared in this segment, document observations:
 Only include players with 3+ observable possessions. Skip players with minimal activity.
 
 --- SCORE AND GAME CONTEXT ---
-  Score at start of segment: [if determinable from film]
-  Score at end of segment: [if determinable from film]
+  Score at start of segment: [if determinable — else "not legible"]
+  Score at end of segment: [if determinable — else "not legible"]
+  **Score sources consulted this segment** (tick all that influenced your numbers): [broadcast bug / arena scoreboard (pan or fixed) / announcer / none legible — **explain**]
+  If the on-screen score bug **jumps incorrectly**, freezes, or conflicts with **arena board** or announcer — note it under FLAGGED OBSERVATIONS; prefer the source that matches **plays you clearly see**.
+  **End-of-game / final score in this clip:** Different uploads differ (no FINAL graphic may exist — phone film, scout cut, missing last minute).
+    • If you see **definitive** end-of-game evidence (e.g. "FINAL" full-screen graphic common on broadcasts, legible horn-time scoreboard totals, definitive announcer "final Score X–Y" **and** visuals align), record it.
+    • If the segment **does not contain** credible end-game proof, write **`final score not established in this segment`** — never guess totals for the column.
+    • Mid-game chunks: **never** label a hypothetical "official final" inferred only from flaky tickers.
   Game situation notes: [was either team protecting a lead? pressing? fouling intentionally?]
-  Tempo notes: [pace of play in this segment vs what you would expect as a baseline]
+  Tempo notes: [pace — may reference OFFENSIVE TEMPO SUMMARY]
+
+--- SUBSTITUTIONS, LINEUPS, AND AVAILABILITY ---
+  Notable subs, injury timeouts, cramping, return-to-play, or lineup changes that affect scouting. Use **only** roster jersey numbers and **exact roster names** for players entering and leaving. If you are unsure who came in, write "substitution occurred — inbound jersey not confirmed" and FLAG.
 
 --- FLAGGED OBSERVATIONS ---
 List anything in this segment that seems important but you are uncertain about:
   - Plays or actions you could not confidently identify
-  - Player jersey numbers you could not confirm from the roster
+  - Player jersey numbers you could not confirm from the roster (scouted team) or from video (opponent)
+  - Opponent zone type or coverage you only partially saw
   - Game situations that seem unusual or that changed how both teams played
   - Any count you are not confident in (state your uncertainty — e.g., "I counted 4 but may have missed 1")
+  - Ball-screen defense: if you had very few opponent PnR possessions to watch, say "thin sample — do not treat as full-game primary coverage"
 
 Be honest about uncertainty. An uncertain count flagged here is more useful than a confident
 wrong count that propagates into the synthesis.
 === END CHUNK {chunk_index} LOG ===
 ```
 
-**Injection note:** `{chunk_index}`, `{total_chunks}`, `{start_min}`, `{end_min}` are
+**Injection note:** `{chunk_index}`, `{total_chunks}`, `{start_min}`, `{end_min}`, and `{roster}` are
 filled programmatically before the prompt is sent. The worker computes start/end minutes
-from `film_chunks.chunk_index` and `film_chunks.duration_seconds`.
+from `film_chunks.chunk_index` and `film_chunks.duration_seconds`. `{roster}` is rendered by
+`services/roster_format.py::format_roster_for_prompt(team_id)`.
 
 ---
 
@@ -253,13 +348,17 @@ from `film_chunks.chunk_index` and `film_chunks.duration_seconds`.
 
 **File:** `backend/prompts/chunk_synthesis.txt`
 
-**Canonical text (2026-05-14):** Same as Stage 1 — live **`VERSION: v1.5`** in **`chunk_synthesis.txt`**. Fenced body below is the **v1.0** mirror; synthesis rules evolved (e.g. **base vs reactive zone offense** splits). Read the **`.txt`** file for exact instructions.
+**Canonical text (2026-05-19):** Live **`VERSION: v1.6`** in **`chunk_synthesis.txt`**. Fenced body below is a verbatim mirror as of this update. The `.txt` file is the source of truth — bump the mirror in the same PR as any `.txt` edit.
 
 ```
-VERSION: v1.5 (see .txt file — mirror below is v1.0 baseline only)
+VERSION: v1.6
 CHANGELOG:
-  v1.5 — Pair with **v1.5** extraction (reactive zone split, aggregate hygiene); see ROADMAP 2026-05-13.
-  v1.0 — Initial version (body below).
+  v1.6 — Final score ladder + insufficient; mandatory segment breakdown math per inventory line; forbidden [CONFIRMED] defended PnR under small N / chunk conflict → mixed; tempo: strict transition sum + pace from chunk summaries; standout operational definition (OTD/separation).
+  v1.5 — Reactive zone-offense split: do not fold REACTIVE-VS-ZONE possessions into base Horns/1-4/motion totals without a sub-count; thin-sample discipline for scouted team's defensive PnR coverage when N is tiny.
+  v1.4 — No invented opponent names; Horns must not merge into 5-out; zone section mandatory sweep; inventory ranking for prep structure; late-game sub cross-check; transition vs half-court reconciliation.
+  v1.3 — Final score reconciliation; defensive PnR coverage confidence discipline; separate half-court inventory (Horns / 1-4 flat vs generic 5-out); opponent zone + problem player; synthesis flags for scoreboard errors.
+  v1.2 — Paired with `chunk_extraction` for `film_analysis_cache` key (see `services/prompt_versions.py`).
+  v1.0 — Initial version.
 ---
 You are synthesizing multiple observation logs from consecutive segments of a basketball game
 into a single, unified full-game intelligence document.
@@ -277,46 +376,80 @@ SYNTHESIS RULES — READ BEFORE PRODUCING OUTPUT:
 
 Rule 1 — AGGREGATE COUNTS EXACTLY.
 Count every occurrence of each action across all segments and report the total.
-If chunk 1 logged 3 Horns sets, chunk 3 logged 4, and chunk 5 logged 2, the total is 9.
-Write 9. Do not re-estimate. Do not approximate. Show your work: "(3 + 4 + 2 = 9 across segments 1, 3, 5)".
+For **every line** under **OFFENSE: SET AND ACTION INVENTORY**, you MUST print **explicit arithmetic**, e.g.
+  `Segment breakdown (show work): chunk0:11 + chunk1:9 + chunk2:4 + chunk3:0 = Total 24`
+before **Success rate.** Same **show work** for **transition** tally and defended-PnR **N** rollup in defensive coverage. Silent totals without sums are unacceptable.
+Do not re-label a possession mid-count — if a chunk called it Horns and another called it "5-out" for what reads like the **same** elbow / horns setup, **prefer Horns** in reconciliation and explain; do not silently fold Horns into "spread."
+
+Rule 1b — **TOP INVENTORY AUDIT BEFORE ORDERING:**
+Re-scan all chunk ACTIONS for **`1-4 flat`**, **`high ball screen`**, **`high PnR`**, **`Horns`**. If chunks buried many of those rows under **generic "5-out"** only because of **ANTI-BUCKETING** failure in upstream logs, correct in synthesis: **pull** those occurrences into **`1-4 flat / high ball screen`** and **Horns** lines when descriptive evidence supports — **FLAG** **`Chunk bucketing repaired in synthesis`** with confidence **Medium** unless chunk text is explicit—prefer **calling out contradiction** vs inventing unseen possessions.
 
 Rule 2 — RECONCILE VOCABULARY BEFORE COUNTING.
 Different chunk logs may use different names for the same action. Before aggregating,
 determine whether two named actions are the same action described differently.
-If chunk 1 calls something "DHO series" and chunk 3 calls it "Spain PnR," determine
-from the structural description whether they are the same action. If yes, unify under
-one name and aggregate. If no, keep them separate and explain why.
-State every reconciliation decision explicitly: "Unified 'DHO series' (chunks 1-2) and
-'Spain PnR' (chunks 3-4) — same two-man action with guard-to-big handoff at the elbow.
-Total: 11 occurrences."
+
+Half-court structure (scouted offense): **Do not** merge visibly different families into one bucket
+just because they are all "perimeter-oriented."
+  • **Horns / Horns DHO** — keep **separate** from generic **5-out motion**. If chunk text mentions elbows, horns, DHO from elbow, two high-post anchors, etc., that inventory line is **Horns**, not 5-out.
+  • **1-4 flat / high PnR** — handler on top, four flat, ball screen at or above the arc — keep separate from vague "spread" unless chunks prove identical structure.
+  • **4-out 1-in / motion** / **5-out** — only when spacing matches those definitions.
+  • **Transition / early offense** — separate from half-court; if chunks over-count transition per the chunk prompt, cap or adjust using narrative consistency and FLAG in SYNTHESIS FLAGS.
+  • **Reactive zone offense** — when chunk **NOTES** contain **`REACTIVE-VS-ZONE`** (or equivalent phrasing: "against zone," "middle of the zone," "2-2-1," "guards up vs 1-2-2"), those possessions are **responses to opponent zone**, not proof of a new base half-court package. In **OFFENSE: VS ZONE AND OPPONENT DEFENSIVE LOOKS**, add a sub-block **Reactive zone-offense possessions:** with count + short evidence by segment. In **OFFENSE: SET AND ACTION INVENTORY**, either **exclude** those possessions from the headline totals for Horns / 1-4 / motion **or** show **base vs reactive** in parentheses (e.g. "Total: 12 (9 base half-court + 3 REACTIVE-VS-ZONE)"). Do not report only the merged total without acknowledging the split when chunks flagged reactive play.
+
+Before finalizing the **OFFENSE: SET AND ACTION INVENTORY** order, scan **all** chunk text for
+the strings **Horns**, **elbow**, **1-4**, **high ball**, **flat**. If Horns and 1-4 / high PnR each have meaningful counts, **neither** may be buried below a generic "5-out" line unless chunk evidence shows 5-out truly had higher totals.
+
+**Spain PnR, Flex, Iverson, Princeton, elevator** — do not introduce these labels unless chunk logs **explicitly** describe them. If chunks do not mention them, do not add them from general basketball knowledge.
 
 Rule 3 — PRESERVE TIMELINE INFORMATION.
 If a team's scheme, coverage, or personnel usage changed during the game, document when
-and why. "They played drop coverage for the first 24 minutes, then switched to hard hedge
-after their opponent scored 3 consecutive pull-up jumpers" is important scouting data.
-Flattening this into "they play a mix of drop and hedge" loses the strategic intelligence.
+and why.
 
 Rule 4 — HANDLE CONTRADICTIONS EXPLICITLY.
 If two chunk logs report conflicting observations about the same action or player, do not
 silently choose one. Flag the contradiction, state what each chunk logged, and state your
 best resolution with your confidence level.
-Example: "Contradiction: chunk 2 logs #3 as right-hand dominant; chunk 4 logs him attacking
-left in 3 consecutive possessions. Resolution: right-hand dominant overall (7 right vs 4 left
-across all segments) but will attack left in specific situations — likely vs right-hand dominant
-on-ball defenders. Confidence: medium."
 
 Rule 5 — SURFACE SINGLE-GAME SIGNALS VS CONFIRMED PATTERNS.
-A tendency observed in only one segment may be a genuine tendency or a sample artifact.
 Tag observations with confidence:
-  [CONFIRMED] — observed in 3+ segments or with high frequency (8+ occurrences)
-  [LIKELY]    — observed in 2 segments or 4-7 occurrences
+  [CONFIRMED] — observed in 3+ segments **or** 8+ logged occurrences of the same discrete behavior
+  [LIKELY]    — observed in 2 segments **or** 4–7 occurrences
   [SINGLE GAME SIGNAL] — observed once or in only one segment. Possible tendency. Not confirmed.
-The scouting report sections will propagate these tags so the coaching staff knows what to trust.
 
-Rule 6 — NEVER INVENT.
+**Defensive ball-screen coverage (scouted team vs opponent PnR):** Be conservative.
+First sum **N_total** implied across chunks (**opponent** on-ball picks the scouted team defended). If chunks give **thin sample**, say so.
+• **[CONFIRMED]** for a **single** umbrella label (**switch**, **drop**, etc.) as **team primary coverage** is **FORBIDDEN** unless **either** ≥ **8** evaluable defended PnR possessions support it **OR** ≥ **three** chunks independently describe consistent **BIG-level** technique (same family).
+• If **N_total < 4**, cap at **[LIKELY]** or **[SINGLE GAME SIGNAL]** and write **thin sample — insufficient to declare full-game primary coverage.**
+• If chunks **contradict** (e.g. chunk A drop/contain vibe, chunk B switch narrative) without clear timeline proof, **`Primary coverage:` `mixed`** + explicit contradiction **FLAG—do not synthesize fake smooth progression.**
+
+Rule 6 — FINAL SCORE AND GAME RESULT (multi-source uploads).
+Uploads vary: broadcast FINAL graphic, horn-time arena scoreboard pan, phone film with weak bug, scout clip missing ending.
+**Prefer evidence in this ladder** (stop at best available):
+  1) **Definitive end-of-video / end-of-period evidence** aligned across picture + sound ("FINAL" style graphic typical on broadcasts, **legible** scoreboard totals at horn, unmistakable definitive announcer finals **and** coherent with last plays).
+  2) Clear **arena scoreboard** read late.
+  3) Reliable **consistent** ticker at **segment end before cut** ONLY if nothing better—and **still** reconcile with plausible event flow.
+
+**Insufficient / honest unknown:** Write exactly
+`Final score (reconciled): insufficient observation — end-of-game not shown clearly or sources conflict unresolved`
+**Never guess** a **final score** from mid-game glitchy bugs. Prefer **later** chronological chunk over earlier if conflict (legacy rule). Explain every score conflict under **SYNTHESIS FLAGS.**
+
+Rule 7 — OPPONENT ZONE AND STANDOUTS.
+Before writing **"None clearly observed"** in **OFFENSE: VS ZONE**, search all chunk logs for:
+**zone**, **2-3**, **1-2-2**, **2-2-1**, **overload**, **middle of the zone**, **against zone.**
+If any appear, summarize with segment evidence. Conflicting small-sample notes still belong here, not silence.
+
+**Opponent standout (problem matchup):**
+  • List **opponent #[N] only** for identity. Trigger: repeated **self-created offense** — pull-ups, separation for scores/FT vs scouted D — cite evidence from chunk logs (game clock if present in text). **Never** label with vague "hot hand" alone.
+  • If chunk **OPPONENT STANDOUTS** or **NOTABLE MOMENTS** support a **problem opponent #[N]** and you wrote **none**, reopen those sections — omission is failure.
+  • You may add **(announcer said "...")** if chunks quoted it — **never** invent full names or verify opponent names not in chunk text.
+  • Do not fill opponent names from general knowledge (e.g. famous prep players) — that is a hard failure mode.
+
+Rule 8 — ROSTER, SUBS, AND SPELLING.
+Scouted-team names must match the roster **exactly** character-for-character everywhere in the document.
+When **SUBSTITUTIONS, LINEUPS, AND AVAILABILITY** sections mention cramps or late subs, **reconcile who entered** across chunks. If chunk A says #5 entered and chunk B says #10 for the same stoppage, treat it as a contradiction — resolve from later/clearer chunk or FLAG.
+
+Rule 9 — NEVER INVENT.
 If the chunk logs do not contain enough information to answer a question, say so.
-"Insufficient data across all segments to determine their late-game offensive preference."
-is the correct output. Fabricating a confident answer is worse than acknowledging the gap.
 
 ---
 
@@ -325,82 +458,91 @@ OUTPUT FORMAT — produce these exact sections in this exact order:
 === FULL-GAME INTELLIGENCE DOCUMENT ===
 Team: [name from roster context]
 Total segments analyzed: {total_chunks}
-Total possessions logged: [sum from all chunk logs]
+Total possessions logged: [sum scouted-team possessions from chunk headers if present; if chunks disagree, show sum and FLAG]
+Opponent possessions: [sum if logged per chunk; otherwise "not logged 1-for-1 in chunk headers — insufficient"]
+
+Final score (reconciled): [Winning Team **nn** — Losing Team **mm** winner + margin **OR** verbatim `insufficient observation — ...` per Rule 6]
 
 --- OFFENSE: SET AND ACTION INVENTORY ---
-List every offensive action identified, reconciled, and counted across the full game.
-Format each entry as:
+[List every offensive action — see Rule 2. Horns and 1-4 flat / high PnR must appear as their own lines when chunk evidence supports them, not only inside a generic spread label.]
 
   [ACTION NAME] [CONFIDENCE TAG]
-  Total occurrences: [exact count] ([breakdown by segment: e.g., "3+4+2 across segments 1,3,5"])
-  Primary initiators: [jersey numbers and names]
-  Primary screeners/participants: [jersey numbers and names]
+  Total occurrences: [exact count] — **must equal** the sum line below (no mismatch).
+  **Segment breakdown (show work):** [chunk sums like `chunk0:X + chunk1:Y + ... = Total`]
+  Primary initiators: [jersey numbers and **exact roster names**]
+  Primary screeners/participants: [jersey numbers and **exact roster names**]
   Typical floor position: [where on court it initiates]
-  Success rate: [good shots produced / total runs — e.g., "6 of 9 produced a good look"]
-  Key counter: [what they run off the primary action when it is taken away, if observed]
-  Reconciliation note: [if vocabulary was unified across chunks, state it here]
+  Success rate: [scores / fouls / TO relative to runs — honest]
+  Key counter: [if observed]
+  Reconciliation note: [if vocabulary was unified across chunks, state it here — or why kept separate]
 
 Order by total occurrences (descending). Their most-used action appears first.
 
+--- OFFENSE: VS ZONE AND OPPONENT DEFENSIVE LOOKS ---
+  Opponent zone: [types / evidence / small sample flags — "None clearly observed" **only** after Rule 7 search finds nothing]
+  How the scouted team attacked it: [sets or principles, or insufficient observation]
+
 --- OFFENSE: TEMPO AND PACE ---
-  Push in transition or set up half-court? [with frequency evidence]
+  **Strict transition (early offense)** — sum ONLY per chunk extraction strict rule; include **segment breakdown arithmetic** `(e.g. chunks 1–4 sums = total)`.
+  **Fast pace without transition bucket** — summarize from chunks' **OFFENSIVE TEMPO SUMMARY**: hurry-up advances that **settled** half-court; praise pace without stealing transition tally.
+  Push vs half-court feel: [narrative + reconcile if summed transition contradicts sheer possession volumes — FLAG disconnects]
   Average time to half-court action initiation: [fast / moderate / deliberate]
-  Pace changes: [did they change tempo situationally? when? evidence from chunk logs]
+  Pace changes: [when + evidence]
 
 --- OFFENSE: OUT-OF-BOUNDS SETS ---
-  List every BLOB/SLOB set observed. Same format as the action inventory above.
+  List every distinct BLOB/SLOB **formation** or repeating look observed (stack, 4-across, box, etc.). Same inventory-style lines as above when count > 1.
   If none observed: "No out-of-bounds sets with repeating structure observed."
 
 --- OFFENSE: LATE-GAME (final 8 minutes of close games) ---
-  Primary isolation player: [jersey number and name, with occurrence count]
+  Primary isolation player: [jersey number and **exact roster name**, with occurrence count]
   Shot clock offense (under 8 seconds): [what they run and who runs it]
   Scheme changes when protecting lead: [if observed]
   Scheme changes when trailing: [if observed]
+  Notable availability / lineup: [only from chunk SUBSTITUTIONS — cramps / key sub; **exact** jersey numbers]
 
 --- DEFENSE: BASE SCHEME ---
   Primary defense: [man / zone type / press]
-  Percentage of possessions: [approximate — e.g., "man-to-man approximately 70% of possessions"]
-  Scheme changes: [full timeline — when did they change and what triggered it]
-  Transition defense: [how they get back, who leads it, quality]
+  Percentage of possessions: [approximate]
+  Scheme changes: [timeline]
+  Transition defense: [quality]
 
 --- DEFENSE: BALL SCREEN COVERAGE ---
-  Primary coverage: [drop / hedge / switch / ICE / blitz]
-  Coverage variations: [does it change by personnel or situation — full detail]
-  Coverage timeline: [did it change during the game? when? what triggered it?]
-  Execution quality: [where does their coverage break down — be specific]
+  **Opponent defended ball-screen possessions (evaluable cumulative N across chunks — show arithmetic):** N_total = [...]
+  Primary coverage narrative: [**drop /** **hedge /** **switch /** **ICE /** **blitz /** **mixed`] [CONFIDENCE TAG per tightened Rule above]
+  Evidence summary: [which segments quoted N; cite thin sample verbatim if totals <4 — **Forbidden** inflate to [CONFIRMED] primary-read team identity]
+  Coverage variations: [detail]
+  Coverage timeline: [timeline]
+  Execution quality: [breakdowns — tie to opponent # if chunks did]
+
+--- DEFENSE: OPPONENT STANDOUT VS SCOUTED TEAM ---
+  Problem matchup / opponent standout(s): [**opponent #[N]** only, plus factual notes from chunks; optional announcer quote in parentheses — **no invented full names**]
+  Confidence: [CONFIRMED / LIKELY / SINGLE GAME SIGNAL] with justification
 
 --- DEFENSE: INDIVIDUAL TENDENCIES ---
 For each player with significant defensive responsibilities:
-  #[JERSEY] [NAME]:
-    Primary assignment: [who or what position they guarded]
-    On-ball quality: [specific, with evidence from chunk logs]
-    Help activity: [active / passive, with examples]
-    Identified weakness: [explicit — what action or situation beats them]
+  #[JERSEY] [EXACT ROSTER NAME]:
+    Primary assignment: [who or what they guarded — opponent # if for a matchup]
+    On-ball quality: [evidence]
+    Help activity: [examples]
+    Identified weakness: [what beats them; **opponent #** if chunks tie a scorer to it]
     Confidence: [CONFIRMED / LIKELY / SINGLE GAME SIGNAL]
 
 --- INDIVIDUAL PLAYER CONSOLIDATED PROFILES ---
 For each player with 10+ observed possessions across all segments:
-  #[JERSEY] [NAME]:
-    Total possessions observed: [sum across all segments]
-    Offensive role: [what they do — be specific, with occurrence counts]
-    Scoring zones: [where on floor they score, with frequency evidence]
-    Dominant hand: [right / left / ambidextrous — with evidence: "attacked right in X of Y drives"]
-    Key tendencies: [list, each tagged with confidence level and occurrence count]
-    Defensive assignment: [who they guard and how]
-    Defensive vulnerability: [what beats them — specific and direct]
+  #[JERSEY] [EXACT ROSTER NAME]:
+    Total possessions observed: [sum]
+    Offensive role: [specific, with counts]
+    Scoring zones: [evidence]
+    Dominant hand: [evidence or insufficient data]
+    Key tendencies: [tagged]
+    Defensive assignment: [summary]
+    Defensive vulnerability: [summary]
 
 --- SYNTHESIS FLAGS ---
-List everything the synthesis is uncertain about:
-  - Vocabulary reconciliations that were judgment calls
-  - Counts where uncertainty was noted in chunk logs
-  - Player identifications that were unclear (jersey number could not be confirmed)
-  - Contradictions that were resolved but where the resolution is not high confidence
-  - Situations that may not be representative of their normal tendencies (e.g., opponent
-    adjusted at halftime and this team responded — normal behavior may differ)
-
-This section is not a sign of failure. It is the most important quality signal in the document.
-An honest synthesis flag prevents a wrong claim from propagating into the scouting report.
-Sections 1-4 will note flagged items with reduced confidence in the final report.
+  - Vocabulary / count judgment calls
+  - Contradictions (scores, subs, coverage)
+  - **Never** list invented opponent identities here as if confirmed — only "model would have guessed X — rejected per Rule 7/9"
+  - Scoreboard / clock issues (Rule 6)
 
 === END FULL-GAME INTELLIGENCE DOCUMENT ===
 ```
@@ -464,8 +606,9 @@ Both outcomes are valuable training signals.
 
 ---
 
-*Last updated: 2026-05-14 — Prompt 0 disk versions **v1.5**; PROMPTS.md §STAGE 1/2 fences marked as v1.0 baseline mirrors; canonical bodies in **`backend/prompts/*.txt`***
-*Production Prompt 0 pair: **`chunk_extraction` v1.5 + `chunk_synthesis` v1.5** (must stay aligned unless intentionally split with `prompt_versions.py` composite key).*
+*Last updated: 2026-05-19 — Prompt 0 disk versions **v1.6**; PROMPTS.md §STAGE 1/2 fences re-mirrored verbatim to v1.6 bodies; canonical text stays in **`backend/prompts/*.txt`** — bump the mirror in the same PR as any `.txt` edit.*
+*Production Prompt 0 pair: **`chunk_extraction` v1.6 + `chunk_synthesis` v1.6** (must stay aligned unless intentionally split with `prompt_versions.py` composite key).*
+*Continued post-eval iteration is tracked in GitHub Issue #28 — bodies above are canonical until that issue closes.*
 *This is the highest-priority prompt to iterate on. Accuracy here determines accuracy everywhere.*
 
 ---
@@ -945,6 +1088,49 @@ correlate corrections to the prompt that generated them. The version is the prim
 
 ---
 
+### Composite cache key (`film_analysis_cache.prompt_version`)
+
+The value written to `film_analysis_cache.prompt_version` (and used for lookup) is composed
+from the prompt-file headers at runtime by `services/prompt_versions.py::get_film_analysis_cache_prompt_version()`.
+Format:
+
+```
+{sections_prompt_version}|{preprocess_prompt_version}
+```
+
+- **`sections_prompt_version`** is the `VERSION:` header of `offensive_sets.txt`. This file
+  is the **sentinel** for the entire 6-section bundle. If you bump any other section prompt
+  (`defensive_schemes.txt`, `pnr_coverage.txt`, `player_pages.txt`, `game_plan.txt`,
+  `adjustments_practice.txt`) **without** also bumping `offensive_sets.txt`, the cache key
+  does **not** change and stale cached sections will be served. Convention: bump all six
+  section prompts to the same version on every release that touches any of them. The
+  sentinel is `offensive_sets.txt` only because it is the alphabetical first — there is no
+  semantic significance.
+
+- **`preprocess_prompt_version`** is normally the shared `VERSION:` of `chunk_extraction.txt`
+  and `chunk_synthesis.txt` (today: `v1.6`). If the two files end up with different versions
+  (e.g. you bump only one), the loader joins them with `+`:
+
+  ```
+  preprocess_v = f"{v0a}+{v0b}"   # e.g. "v1.7+v1.6"
+  ```
+
+  This forms a deliberately ugly key (`v1.0|v1.7+v1.6`) so that diverged-version states are
+  obvious in logs and Neon. Aligned versions are the norm; the `+` join exists to keep the
+  cache key correct during the brief window between bumping one preprocess prompt and the
+  other.
+
+Example composite keys:
+- All-aligned today: `v1.0|v1.6`
+- After bumping `offensive_sets.txt` to v1.1 (other sections aligned): `v1.1|v1.6`
+- During a Prompt 0A bump but 0B not yet aligned: `v1.0|v1.7+v1.6`
+
+A prompt edit that produces a new composite key invalidates every cached entry at the old
+key — the next report run for that film re-executes all 4 sections (and re-executes Prompts
+0A + 0B if the preprocess half of the key changed). This is the intended behavior.
+
+---
+
 ## PROMPT QUALITY RULES
 
 These rules apply to every prompt in this file and to any future prompt Tommy writes.
@@ -1000,6 +1186,7 @@ It contains: team name, report date, TEX branding.
 
 ---
 
-*Last updated: Phase 0 — Context Engineering*
-*Current prompt versions: all sections at v1.0*
+*Last updated: 2026-05-19 — Prompt 0A/0B re-mirrored at v1.6 (D-023); composite cache key documented; loader snippet aligned with `services/prompts.py`.*
+*Current prompt versions: sections 1–6 at v1.0, Prompts 0A/0B at v1.6.*
 *Prompt changes require version increment + EVALS.md validation before declaring improvement.*
+*Post-eval iteration of Prompts 0A/0B is tracked in GitHub Issue #28.*
