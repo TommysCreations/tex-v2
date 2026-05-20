@@ -11,14 +11,43 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Stage 1 text gate + Phase 3.17:** **(1) done** for Film 04 in Neon (**v1.6** preprocess). **(2)** Smell-test chunk extractions + synthesis vs **`golden_set/film_04_montverde_vs_brewster/ground_truth.md`**. **(3)** If good → **`generate_report`** smoke (full chord + PDF); if gaps → prompt/golden iterations.
+**Active Task:** **Grading UI build — item 1 of 9 (R6 schema) done in PR.** Migration `017_corrections_add_claim_status.sql` is open in PR #37 against `main` from `feature/grading-ui`, awaiting Tommy's verification on Neon dev + merge. Next build item: R13 (admin endpoint exposing report section content for the grading walker). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 15, 2026 — Film 04 **`v1.0|v1.6`** cache row written in Neon; step (1) complete.
+**Last Updated:** May 20, 2026 — R6 schema migration PR #37 open awaiting verification; ROADMAP entry added.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-20) — R6 schema migration for the corrections table; grading UI build item 1 of 9:**
+
+R6 is the load-bearing schema decision for the entire grading UI per `GRADING_UI_AUDIT.md` ("Decisions locked 2026-05-19"). The three-way `captured` / `missed` / `hallucinated` classification cannot be represented by the prior binary `is_correct` schema — specifically, the "missed" case has no `ai_claim` text to store, which collided with `ai_claim text NOT NULL`. PR #37 lands the schema change. Engineering work is done; verification + merge are Tommy-side.
+
+*What landed:*
+- `backend/migrations/017_corrections_add_claim_status.sql` — 7 steps: (1) add `claim_status text` nullable, (2) backfill from `is_correct` (true→`captured`, false→`hallucinated`), (3) `CHECK (claim_status IN ('captured','missed','hallucinated'))` + `SET NOT NULL`, (4) `DROP NOT NULL` on `ai_claim`, (5) semantic `CHECK` linking `claim_status` to `ai_claim`/`correct_claim` presence (captured/hallucinated → `ai_claim NOT NULL`; missed → `ai_claim NULL AND correct_claim NOT NULL`), (6) index on `claim_status` for the pattern analyzer `GROUP BY`, (7) `is_correct` intentionally retained for backwards compat with existing reads in `backend/routers/admin.py` and the frontend — drop scheduled in a follow-up migration post-launch.
+- `SCHEMA.md` — corrections table block updated to post-migration state: `ai_claim` nullable, `claim_status NOT NULL` with inline `CONSTRAINT` blocks for both CHECK rules, new `idx_corrections_claim_status` index. MIGRATION ORDER list extended to `017_corrections_add_claim_status.sql`. One-line `is_correct` deprecation note added.
+
+*What Tommy does next:*
+1. Apply via Neon MCP against the dev branch.
+2. Run the three verification queries from the PR body:
+   - `SELECT claim_status, COUNT(*) FROM corrections GROUP BY claim_status;` — expect only `captured` + `hallucinated`, zero NULL.
+   - `SELECT id FROM corrections WHERE claim_status IS NULL;` — expect zero rows.
+   - Bad-insert smoke test (`claim_status = 'capture'` typo, or `'missed'` with non-null `ai_claim`) — expect the relevant `CHECK` constraint to fire; rollback after.
+3. Paste outputs into the PR description's "Verification (pending apply)" placeholder.
+4. Smoke-test the `/admin` list page to confirm existing reads still work (since `is_correct` is retained).
+5. Merge PR #37.
+6. Then R13 (next grading-UI build item — `GET /admin/reports/{report_id}` returning full section content for the claim walker).
+
+*Scope kept tight (intentionally not touched):*
+- `backend/routers/admin.py`, `backend/models/schemas.py`, frontend, other migrations, pattern analyzer queries. App-layer wiring lands in R3 (per the build prompt at `docs/claude_code_prompts/grading_ui_build.md`).
+
+*Git state:*
+- Commits on `feature/grading-ui` since branching from `main`: `a1ab95d` (prep — launch checklist, decisions block, build prompt) and `7869c6a` (R6 schema + SCHEMA.md). This commit adds the ROADMAP entry.
+- PR: https://github.com/aidn31/tex-v2/pull/37
+- No code changes outside the migration file and SCHEMA.md.
+
+---
 
 **Session log (2026-05-12, late evening) — First end-to-end pipeline run on real film (Film 04 — Montverde vs Brewster, 1.95 GB); Prompts 0A v1.0 confirmed running on 4/4 chunks; Prompt 0B v1.0 blocked by SDK HTTP-timeout bug:**
 
