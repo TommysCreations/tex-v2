@@ -11,14 +11,55 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 of 9 done in PR.** R6 schema (PR #37) and R13 admin report-content endpoint (PR #38) both merged to `main`; both pulled into `feature/grading-ui`. R8 ground-truth loader (PR #39) is open against `main` from the same branch, awaiting Tommy's auth-gated verification (4 paths: 200 list, 200 detail, 404 missing slug, 400 invalid slug) + merge. Next build item: R7 (side-by-side layout — new admin route `/admin/grade/[report_id]` rendering report sections beside the ground-truth markdown). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39) merged or open against `main`. R7 side-by-side canvas opened as PR #40 against `main` from `feature/grading-ui` — awaiting Tommy's browser smoke test (admin auth-gated, can't be done from CI/agent). Next build item: R9 (sentence-split claim walker — captured / missed / hallucinated buttons + keyboard shortcuts, on top of the R7 canvas). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 20, 2026 — R8 ground-truth loader PR #39 open awaiting auth-gated verification; BBE/AZ display-name override added (`0a3ac58`); ROADMAP entry refreshed.
+**Last Updated:** May 20, 2026 — R7 side-by-side grading canvas PR #40 open; awaiting Tommy's browser smoke test + merge.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-20, late evening) — R7 side-by-side grading canvas; build item 4 of 9:**
+
+R7 is the first piece of the grading UI Tommy actually sees — the page that pairs an R13 report with an R8 ground-truth doc in a two-pane layout. Read-only by design: no buttons, no save, no claim extraction (R9 + R3+R10 land next). Per `GRADING_UI_AUDIT.md` row R7, this is greenfield; current `/admin` pages are single-column with no two-pane component to reuse. Audit estimate was 4-6h.
+
+*What landed (PR #40 on `feature/grading-ui`, commit `36c62a0`):*
+- `frontend/app/admin/grade/[report_id]/page.tsx` — new client page. 50/50 grid, sticky header strip, two `h-[calc(100vh-180px)] overflow-y-auto` panes that scroll independently. Three explicit fetch states (loading / error / loaded) per fetch — three fetches total: report content, golden-film list, ground-truth doc.
+- Left pane: `react-markdown` + `remark-gfm` rendering of the ground-truth doc. Tables, blockquotes, and code blocks all in `golden_set/film_04_*/ground_truth.md` — GFM is required. `@tailwindcss/typography` isn't installed in this project, so markdown is styled via a scoped `<style jsx global>` block on a `.grading-markdown` class (manual `h1/h2/h3/p/ul/ol/table/blockquote/code` rules). Empty state: "Select a golden film to load ground truth." Loading state: muted spinner line. Error state: red inline message.
+- Right pane: report metadata header (status / completed_at / report_id / films) + one `SectionBlock` per section, sorted into canonical PDF order (`offensive_sets → adjustments_practice`). Each section renders `whitespace-pre-wrap` content with `prompt_version · model_used · status` in the block header. `status !== 'complete'` or `content === null` → italicized "Section not available" placeholder (no crash).
+- Header strip: sticky, shows `Grading: {team_name} · prompt {report_prompt_version}` on the left and the golden-film dropdown (sourced from R8 `listGoldenFilms`) on the right. Picking a film triggers the ground-truth fetch.
+- `react-markdown@^10`, `remark-gfm@^4` added to `frontend/package.json` (neither was present).
+
+*R13 backend extension (Tommy approved 2026-05-20):*
+- `AdminReportDetail` now returns `team_name`. Implementation: `JOIN teams t ON t.id = r.team_id` added to the existing R13 query; one new field on the Pydantic model + TS interface. No new route, no new endpoint, no migration. The alternative (calling user-scoped `/teams/{id}` from the admin page) doesn't work for admins viewing reports owned by other coaches. Touched files: `backend/routers/admin.py`, `backend/models/schemas.py`, `frontend/lib/api.ts`.
+
+*Engineering-side verification (clean):*
+- `npx tsc --noEmit` → no output (clean).
+- `npm run lint` → no new warnings on the new file. Pre-existing `react-hooks/exhaustive-deps` warnings elsewhere unchanged.
+- `npm run build` → succeeds. New route appears as `/admin/grade/[report_id]` (49.1 kB / 172 kB first-load JS; bulk is the markdown renderer).
+
+*What Tommy does next (browser smoke test — checklist in PR #40 body):*
+1. `docker compose up api worker redis` + `cd frontend && npm run dev`.
+2. Sign in as admin (Tommy's dev user — `is_admin = true` on Neon dev).
+3. Navigate to `http://localhost:3000/admin/grade/970e57dd-256c-464a-9d25-78f29dd01135`.
+4. Confirm: admin nav at top; header shows team name + prompt version (R13 JOIN populates `team_name`); right pane renders all sections in canonical order; dropdown shows 5 golden films with BBE/AZ display names; left pane shows empty-state hint until a film is picked; picking a film loads ground-truth markdown with tables rendered; both panes scroll independently; no console errors.
+5. Force a 404 at `/admin/grade/00000000-0000-0000-0000-000000000000` — right pane shows clean error, not crashed page.
+6. DevTools-offline the ground-truth fetch — left pane shows error state.
+7. Merge PR #40.
+8. Then R9 (sentence-split claim walker on top of the canvas — captured / missed / hallucinated buttons, keyboard shortcuts, claim N of M counter). Audit estimate 4-6h.
+
+*Scope kept tight (intentionally not touched):*
+- `backend/migrations/` (no schema changes), the `corrections` table or its routes (R3+R10 work), the existing `/admin/page.tsx` corrections page (no refactor for "consistency"), `frontend/app/admin/patterns/`. No claim extraction, no sentence splitting, no save logic, no `EVAL_SCORES.md` writes, no snapshot logic, no keyboard shortcuts. Per the build prompt at `docs/claude_code_prompts/grading_ui_build.md`.
+
+*Judgment calls — original count 1; current state:*
+1. **Header label vs `AdminReportDetail` shape — RESOLVED.** Brief asked for `team_name` in the header strip but R13 only exposed `team_id`. Asked Tommy: option 1 (add `team_name` via JOIN, ~10 lines, in this PR), option 2 (truncated UUID), option 3 (omit team label). Tommy picked option 1; backend touch documented above and noted in PR body.
+
+*Git state:*
+- Commits on `feature/grading-ui` since R8: `36c62a0` (R7 frontend page + R13 `team_name` extension).
+- PR: https://github.com/aidn31/tex-v2/pull/40
+
+---
 
 **Session log (2026-05-20, late evening) — R8 ground-truth loader endpoints for the grading UI; build item 3 of 9:**
 
