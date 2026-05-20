@@ -188,9 +188,10 @@ async def get_admin_report_detail(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, user_id, team_id, status, prompt_version, "
-                "created_at, completed_at "
-                "FROM reports WHERE id = %s AND deleted_at IS NULL",
+                "SELECT r.id, r.user_id, r.team_id, t.name, r.status, "
+                "r.prompt_version, r.created_at, r.completed_at "
+                "FROM reports r JOIN teams t ON t.id = r.team_id "
+                "WHERE r.id = %s AND r.deleted_at IS NULL",
                 (str(report_id),),
             )
             report_row = cur.fetchone()
@@ -224,10 +225,11 @@ async def get_admin_report_detail(
         report_id=str(report_row[0]),
         user_id=str(report_row[1]),
         team_id=str(report_row[2]),
-        status=report_row[3],
-        report_prompt_version=report_row[4],
-        created_at=report_row[5],
-        completed_at=report_row[6],
+        team_name=report_row[3],
+        status=report_row[4],
+        report_prompt_version=report_row[5],
+        created_at=report_row[6],
+        completed_at=report_row[7],
         films=[
             AdminReportFilm(film_id=str(r[0]), file_name=r[1]) for r in film_rows
         ],
