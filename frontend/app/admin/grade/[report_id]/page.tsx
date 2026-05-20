@@ -2,7 +2,7 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -14,34 +14,15 @@ import {
   getGoldenTruth,
   listGoldenFilms,
 } from '@/lib/api';
+import { SECTION_LABELS, sectionOrderIndex } from '@/lib/grading/sections';
+import Walker, { buildSortedClaims, useWalkerReducer } from './Walker';
 
-// Canonical PDF order. Mirrors backend CANONICAL_SECTION_ORDER in
-// admin.py — keep client-side too so any missing rows fall to the end
-// in a predictable place instead of crashing the page.
-const SECTION_ORDER = [
-  'offensive_sets',
-  'defensive_schemes',
-  'pnr_coverage',
-  'player_pages',
-  'game_plan',
-  'adjustments_practice',
-];
-
-const SECTION_LABELS: Record<string, string> = {
-  offensive_sets: 'Offensive Sets',
-  defensive_schemes: 'Defensive Schemes',
-  pnr_coverage: 'Pick & Roll Coverage',
-  player_pages: 'Player Pages',
-  game_plan: 'Game Plan',
-  adjustments_practice: 'Adjustments & Practice',
-};
+type Mode = 'preview' | 'walker';
 
 function sortSections(sections: AdminReportSection[]): AdminReportSection[] {
-  const indexOf = (s: string) => {
-    const i = SECTION_ORDER.indexOf(s);
-    return i === -1 ? SECTION_ORDER.length : i;
-  };
-  return [...sections].sort((a, b) => indexOf(a.section_type) - indexOf(b.section_type));
+  return [...sections].sort(
+    (a, b) => sectionOrderIndex(a.section_type) - sectionOrderIndex(b.section_type),
+  );
 }
 
 export default function GradeReportPage() {
@@ -62,6 +43,10 @@ export default function GradeReportPage() {
   const [groundTruth, setGroundTruth] = useState<GroundTruthDocument | null>(null);
   const [gtLoading, setGtLoading] = useState(false);
   const [gtError, setGtError] = useState<string | null>(null);
+
+  // Right-pane mode toggle. Walker state lives at this level so it
+  // survives mode toggles (preview ↔ walker) within the same page-load.
+  const [mode, setMode] = useState<Mode>('preview');
 
   // Load report once on mount.
   useEffect(() => {
@@ -145,7 +130,18 @@ export default function GradeReportPage() {
     };
   }, [selectedSlug, getToken]);
 
-  const sortedSections = report ? sortSections(report.sections) : [];
+  const sortedSections = useMemo(
+    () => (report ? sortSections(report.sections) : []),
+    [report],
+  );
+
+  // Build claims once per report. Walker reads from this list; preview
+  // mode doesn't need it. State (cursor / classifications / history)
+  // lives in useWalkerReducer and persists across mode toggles.
+  const claims = useMemo(() => buildSortedClaims(sortedSections), [sortedSections]);
+  const [walkerState, walkerDispatch] = useWalkerReducer(claims);
+
+  const canStartGrading = !!report && claims.length > 0;
 
   return (
     <div className="-mx-6 -mt-6">
@@ -179,9 +175,7 @@ export default function GradeReportPage() {
               </option>
             ))}
           </select>
-          {filmsError && (
-            <span className="text-xs text-red-400">{filmsError}</span>
-          )}
+          {filmsError && <span className="text-xs text-red-400">{filmsError}</span>}
         </div>
       </div>
 
@@ -197,13 +191,9 @@ export default function GradeReportPage() {
               Select a golden film to load ground truth.
             </p>
           )}
-          {gtLoading && (
-            <p className="text-sm text-gray-400">Loading ground truth...</p>
-          )}
+          {gtLoading && <p className="text-sm text-gray-400">Loading ground truth...</p>}
           {gtError && (
-            <p className="rounded bg-red-900/50 px-3 py-2 text-sm text-red-300">
-              {gtError}
-            </p>
+            <p className="rounded bg-red-900/50 px-3 py-2 text-sm text-red-300">{gtError}</p>
           )}
           {groundTruth && (
             <div className="grading-markdown text-sm leading-relaxed text-gray-200">
@@ -214,57 +204,78 @@ export default function GradeReportPage() {
           )}
         </div>
 
-        {/* Right pane — TEX Report */}
+        {/* Right pane — TEX Report (preview) or Walker */}
         <div className="h-[calc(100vh-180px)] overflow-y-auto rounded-lg border border-border bg-surface p-4">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-brand">
-            TEX Report
-          </h2>
-          {reportLoading && (
-            <p className="text-sm text-gray-400">Loading report...</p>
-          )}
-          {reportError && (
-            <p className="rounded bg-red-900/50 px-3 py-2 text-sm text-red-300">
-              {reportError}
-            </p>
-          )}
-          {report && (
-            <>
-              <div className="mb-4 space-y-1 text-xs text-gray-400">
-                <div>
-                  <span className="text-gray-500">status:</span>{' '}
-                  <span className="text-white">{report.status}</span>
-                </div>
-                <div>
-                  <span className="text-gray-500">completed:</span>{' '}
-                  <span className="text-white">
-                    {report.completed_at
-                      ? new Date(report.completed_at).toLocaleString()
-                      : 'not complete'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-gray-500">report id:</span>{' '}
-                  <span className="font-mono text-white">{report.report_id}</span>
-                </div>
-                {report.films.length > 0 && (
-                  <div>
-                    <span className="text-gray-500">films:</span>{' '}
-                    <span className="text-white">
-                      {report.films.map((f) => f.file_name).join(', ')}
-                    </span>
-                  </div>
-                )}
-              </div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-brand">
+              {mode === 'walker' ? 'Walker' : 'TEX Report'}
+            </h2>
+            {mode === 'preview' && canStartGrading && (
+              <button
+                type="button"
+                onClick={() => setMode('walker')}
+                className="rounded bg-brand px-3 py-1 text-xs font-semibold text-black hover:bg-orange-400"
+              >
+                Start grading
+              </button>
+            )}
+          </div>
 
-              <div className="space-y-4">
-                {sortedSections.map((s) => (
-                  <SectionBlock key={s.section_type} section={s} />
-                ))}
-                {sortedSections.length === 0 && (
-                  <p className="text-sm text-gray-400">No sections found.</p>
-                )}
-              </div>
+          {mode === 'preview' ? (
+            <>
+              {reportLoading && <p className="text-sm text-gray-400">Loading report...</p>}
+              {reportError && (
+                <p className="rounded bg-red-900/50 px-3 py-2 text-sm text-red-300">
+                  {reportError}
+                </p>
+              )}
+              {report && (
+                <>
+                  <div className="mb-4 space-y-1 text-xs text-gray-400">
+                    <div>
+                      <span className="text-gray-500">status:</span>{' '}
+                      <span className="text-white">{report.status}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">completed:</span>{' '}
+                      <span className="text-white">
+                        {report.completed_at
+                          ? new Date(report.completed_at).toLocaleString()
+                          : 'not complete'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">report id:</span>{' '}
+                      <span className="font-mono text-white">{report.report_id}</span>
+                    </div>
+                    {report.films.length > 0 && (
+                      <div>
+                        <span className="text-gray-500">films:</span>{' '}
+                        <span className="text-white">
+                          {report.films.map((f) => f.file_name).join(', ')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    {sortedSections.map((s) => (
+                      <SectionBlock key={s.section_type} section={s} />
+                    ))}
+                    {sortedSections.length === 0 && (
+                      <p className="text-sm text-gray-400">No sections found.</p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
+          ) : (
+            <Walker
+              claims={claims}
+              state={walkerState}
+              dispatch={walkerDispatch}
+              onExit={() => setMode('preview')}
+            />
           )}
         </div>
       </div>
@@ -322,7 +333,7 @@ export default function GradeReportPage() {
           font-size: 0.8rem;
         }
         .grading-markdown blockquote {
-          border-left: 2px solid #F97316;
+          border-left: 2px solid #f97316;
           padding-left: 0.75rem;
           margin: 0.6rem 0;
           color: #d4d4d4;
@@ -350,7 +361,7 @@ export default function GradeReportPage() {
           margin: 0.8rem 0;
         }
         .grading-markdown a {
-          color: #F97316;
+          color: #f97316;
           text-decoration: underline;
         }
       `}</style>
@@ -365,9 +376,7 @@ function SectionBlock({ section }: { section: AdminReportSection }) {
   return (
     <div className="rounded-lg border border-border bg-background p-3">
       <div className="mb-2 flex items-baseline justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">
-          {label}
-        </h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">{label}</h3>
         <div className="text-[10px] text-gray-500">
           <span className="font-mono">{section.prompt_version}</span>
           {section.model_used && (
