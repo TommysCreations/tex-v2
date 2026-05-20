@@ -432,3 +432,28 @@ export function getAdminReportDetail(
 ): Promise<AdminReportDetail> {
   return apiFetch(`/admin/reports/${reportId}`, { token });
 }
+
+// --- Admin: golden-set ground-truth loader (R8 — consumed by grading UI) ---
+
+export interface GoldenFilm {
+  slug: string;
+  display_name: string;
+}
+
+export interface GroundTruthDocument {
+  slug: string;
+  content: string;
+}
+
+export function listGoldenFilms(token: string): Promise<GoldenFilm[]> {
+  return apiFetch('/admin/golden-set', { token });
+}
+
+export function getGoldenTruth(
+  token: string,
+  slug: string,
+): Promise<GroundTruthDocument> {
+  return apiFetch(`/admin/golden-set/${encodeURIComponent(slug)}/ground-truth`, {
+    token,
+  });
+}
