@@ -159,6 +159,7 @@ class AdminReportDetail(BaseModel):
     report_id: str
     user_id: str
     team_id: str
+    team_name: str
     status: str
     report_prompt_version: str
     created_at: datetime

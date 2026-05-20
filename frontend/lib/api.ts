@@ -418,6 +418,7 @@ export interface AdminReportDetail {
   report_id: string;
   user_id: string;
   team_id: string;
+  team_name: string;
   status: string;
   report_prompt_version: string;
   created_at: string;
