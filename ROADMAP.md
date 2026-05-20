@@ -11,14 +11,56 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 of 9 done in PR.** R6 schema (PR #37) merged to `main` and pulled into `feature/grading-ui`. R13 admin report-content endpoint (PR #38) is open against `main` from the same branch, awaiting Tommy's auth-gated verification (200 / 404 / 422 with a real admin JWT) + merge. Next build item: R8 (ground-truth loader — `GET /admin/golden-set` list + `GET /admin/golden-set/{film_slug}/ground-truth` reader, plus the frontend selector). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 of 9 done in PR.** R6 schema (PR #37) and R13 admin report-content endpoint (PR #38) both merged to `main`; both pulled into `feature/grading-ui`. R8 ground-truth loader (PR #39) is open against `main` from the same branch, awaiting Tommy's auth-gated verification (4 paths: 200 list, 200 detail, 404 missing slug, 400 invalid slug) + merge. Next build item: R7 (side-by-side layout — new admin route `/admin/grade/[report_id]` rendering report sections beside the ground-truth markdown). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 20, 2026 — R13 admin endpoint PR #38 open awaiting auth-gated verification; ROADMAP entry added.
+**Last Updated:** May 20, 2026 — R8 ground-truth loader PR #39 open awaiting auth-gated verification; ROADMAP entry added.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-20, late evening) — R8 ground-truth loader endpoints for the grading UI; build item 3 of 9:**
+
+R8 is the read path the grading UI calls to pair a generated report with its hand-written ground truth (R7's other pane). Per `GRADING_UI_AUDIT.md` row R8, the 5 ground-truth markdown files exist on disk under `golden_set/{slug}/ground_truth.md` but no backend endpoint reads them. PR #39 adds the two endpoints — list + fetch — that close that gap. Audit estimate was 3-5h.
+
+*What landed (PR #39, commit `03fda06` on `feature/grading-ui`):*
+- `backend/routers/admin.py` — two new admin-gated routes. `GET /admin/golden-set` walks `GOLDEN_SET_ROOT`, returns one `{slug, display_name}` per subdirectory containing a `ground_truth.md`; sorted, deterministic. `GET /admin/golden-set/{film_slug}/ground-truth` reads `golden_set/{slug}/ground_truth.md` and returns `{slug, content}` as raw markdown. Path traversal defended in two layers: slug regex `^[a-zA-Z0-9_-]+$` (400 on anything else, before any FS access), plus a post-`resolve()` containment check that the joined path is still inside `GOLDEN_SET_ROOT`. File reads use explicit `encoding="utf-8"`. No DB access in either route.
+- `backend/models/schemas.py` — `GoldenFilm` and `GroundTruthDocument` Pydantic response models.
+- `frontend/lib/api.ts` — matching `GoldenFilm` and `GroundTruthDocument` TS interfaces; `listGoldenFilms(token)` and `getGoldenTruth(token, slug)` typed wrappers. **No UI work.** R7 (side-by-side layout) is the consumer.
+- `docker-compose.yml` — added read-only volume mount `./golden_set:/golden_set:ro` to the api service only (worker doesn't need it). Code defaults `GOLDEN_SET_ROOT=/golden_set`, env-overridable.
+
+*Two judgment calls flagged for review (PR body has the table):*
+1. **`display_name` transform — acronyms not preserved.** Spec said "no hardcoded mapping; simple regex/string transform" but the example data showed "BBE" / "AZ". A deterministic transform can't produce uppercase acronyms without a mapping. Current output: Films 03/04/05 render perfectly; Films 01/02 show "Bbe" / "Az" instead of "BBE" / "AZ". Fix is a 2-line override dict if Tommy wants the canonical caps.
+2. **Production-deploy story for `golden_set/`.** Dev fix is a Compose volume mount. Cloud Run won't have that volume — production needs a separate decision (bake into image, pull from R2, or seed into Postgres). Per the audit: *"productionize later if needed."* Flagged so it isn't forgotten.
+
+*Local verification (engineering side — clean):*
+- `docker compose up -d --build api`: clean rebuild, container Recreated + Started.
+- `/health` → 200; `docker compose exec api ls /golden_set` → 5 film dirs + README visible.
+- `GET /openapi.json` confirms both `/admin/golden-set` and `/admin/golden-set/{film_slug}/ground-truth` registered.
+- Unauthenticated probes → `401 Missing authorization header` on both routes.
+- In-process exercise of both handlers with a fake admin dict (proves the read + error paths without a JWT): LIST returns 5 films; DETAIL for `film_04_montverde_vs_brewster` returns the 77,895-char markdown (starts with `# Film 04 — Ground Truth (Answer Key)`); slug `has.dot` → 400 Invalid; slug `..` → 400 Invalid; slug `film_99_nope` → 404 Golden film not found.
+- Frontend `npx tsc --noEmit` → no output (clean).
+
+*What Tommy does next (auth-gated verification — checklist in PR #39 body):*
+1. Pull the branch, `docker compose up -d --build api`, confirm `/golden_set` visible inside container.
+2. From `localhost:8001/docs` (Authorize button with admin Bearer token):
+   - `GET /admin/golden-set` → expect array of 5 films.
+   - `GET /admin/golden-set/film_04_montverde_vs_brewster/ground-truth` → expect markdown of the file on disk.
+   - `GET /admin/golden-set/film_does_not_exist/ground-truth` → expect 404.
+   - `GET /admin/golden-set/has.dot/ground-truth` → expect 400.
+3. Decide on the BBE/AZ acronym question. Either accept the "Bbe"/"Az" output or ask for a 5-entry override dict.
+4. Merge PR #39.
+5. Then R7 (side-by-side layout — new admin route `/admin/grade/[report_id]` that combines the R13 + R8 reads into a two-pane view; first piece of grading UI the user actually sees). Audit estimate 4-6h.
+
+*Scope kept tight (intentionally not touched):*
+- `backend/migrations/` (no schema changes), the corrections table and its routes, `frontend/app/admin/*` (no new pages), any prompt file, any worker, the R13 admin endpoint. Per the build prompt at `docs/claude_code_prompts/grading_ui_build.md`.
+
+*Git state:*
+- Commits on `feature/grading-ui` since R13 merge: `03fda06` (R8 backend + dev mount + frontend wrappers). This commit adds the ROADMAP entry.
+- PR: https://github.com/aidn31/tex-v2/pull/39
+
+---
 
 **Session log (2026-05-20, evening) — R13 admin report-content endpoint for the grading UI; build item 2 of 9:**
 
