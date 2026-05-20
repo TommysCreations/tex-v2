@@ -393,3 +393,42 @@ export function grantCredits(
     body: JSON.stringify({ credits }),
   });
 }
+
+// --- Admin: full report content (R13 — consumed by grading UI) ---
+
+export interface AdminReportFilm {
+  film_id: string;
+  file_name: string;
+}
+
+export interface AdminReportSection {
+  section_type: string;
+  status: string;
+  content: string | null;
+  model_used: string | null;
+  prompt_version: string;
+  chunk_count: number | null;
+  tokens_input: number | null;
+  tokens_output: number | null;
+  generation_time_seconds: number | null;
+  error_message: string | null;
+}
+
+export interface AdminReportDetail {
+  report_id: string;
+  user_id: string;
+  team_id: string;
+  status: string;
+  report_prompt_version: string;
+  created_at: string;
+  completed_at: string | null;
+  films: AdminReportFilm[];
+  sections: AdminReportSection[];
+}
+
+export function getAdminReportDetail(
+  token: string,
+  reportId: string,
+): Promise<AdminReportDetail> {
+  return apiFetch(`/admin/reports/${reportId}`, { token });
+}

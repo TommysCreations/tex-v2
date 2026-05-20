@@ -7,10 +7,12 @@ Per CLAUDE.md:
 """
 
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from models.schemas import AdminReportDetail, AdminReportFilm, AdminReportSection
 from services.clerk import require_admin
 from services.db import get_connection
 
@@ -39,6 +41,98 @@ class CorrectionCreate(BaseModel):
 
 class CreditGrant(BaseModel):
     credits: int
+
+
+# Canonical section order from PROMPTS.md. Sections are returned in this order;
+# missing rows are not fabricated — the frontend detects gaps by section_type.
+CANONICAL_SECTION_ORDER = [
+    "offensive_sets",
+    "defensive_schemes",
+    "pnr_coverage",
+    "player_pages",
+    "game_plan",
+    "adjustments_practice",
+]
+
+
+# ---------------------------------------------------------------------------
+# R13 — GET /admin/reports/{report_id} (grading UI)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/reports/{report_id}", response_model=AdminReportDetail)
+async def get_admin_report_detail(
+    report_id: UUID,
+    user: dict = Depends(require_admin),
+):
+    """Return full report content + per-section metadata + films list.
+
+    Read-only, admin-gated. Consumed by the grading UI (R7 side-by-side view).
+    No user_id scoping — admins see everything.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, user_id, team_id, status, prompt_version, "
+                "created_at, completed_at "
+                "FROM reports WHERE id = %s AND deleted_at IS NULL",
+                (str(report_id),),
+            )
+            report_row = cur.fetchone()
+            if not report_row:
+                raise HTTPException(status_code=404, detail="Report not found")
+
+            cur.execute(
+                "SELECT f.id, f.file_name "
+                "FROM report_films rf "
+                "JOIN films f ON f.id = rf.film_id "
+                "WHERE rf.report_id = %s "
+                "ORDER BY rf.created_at",
+                (str(report_id),),
+            )
+            film_rows = cur.fetchall()
+
+            cur.execute(
+                "SELECT section_type, status, content, model_used, prompt_version, "
+                "chunk_count, tokens_input, tokens_output, generation_time_seconds, "
+                "error_message "
+                "FROM report_sections "
+                "WHERE report_id = %s "
+                "ORDER BY array_position(%s::text[], section_type)",
+                (str(report_id), CANONICAL_SECTION_ORDER),
+            )
+            section_rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return AdminReportDetail(
+        report_id=str(report_row[0]),
+        user_id=str(report_row[1]),
+        team_id=str(report_row[2]),
+        status=report_row[3],
+        report_prompt_version=report_row[4],
+        created_at=report_row[5],
+        completed_at=report_row[6],
+        films=[
+            AdminReportFilm(film_id=str(r[0]), file_name=r[1]) for r in film_rows
+        ],
+        sections=[
+            AdminReportSection(
+                section_type=r[0],
+                status=r[1],
+                content=r[2],
+                model_used=r[3],
+                prompt_version=r[4],
+                chunk_count=r[5],
+                tokens_input=r[6],
+                tokens_output=r[7],
+                generation_time_seconds=r[8],
+                error_message=r[9],
+            )
+            for r in section_rows
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------

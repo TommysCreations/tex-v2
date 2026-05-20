@@ -132,6 +132,41 @@ class ReportDetailResponse(ReportResponse):
     pdf_url: str | None = None
 
 
+# --- Admin: full report content for grading UI ---
+
+
+class AdminReportFilm(BaseModel):
+    film_id: str
+    file_name: str
+
+
+class AdminReportSection(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    section_type: str
+    status: str
+    content: str | None = None
+    model_used: str | None = None
+    prompt_version: str
+    chunk_count: int | None = None
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    generation_time_seconds: int | None = None
+    error_message: str | None = None
+
+
+class AdminReportDetail(BaseModel):
+    report_id: str
+    user_id: str
+    team_id: str
+    status: str
+    report_prompt_version: str
+    created_at: datetime
+    completed_at: datetime | None = None
+    films: list[AdminReportFilm] = []
+    sections: list[AdminReportSection] = []
+
+
 # --- Stripe ---
 
 
