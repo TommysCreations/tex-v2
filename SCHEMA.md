@@ -40,6 +40,7 @@ Raw SQL only. No ORM. Read this before writing a single query.
 014_create_fallback_events.sql
 015_install_pgvector.sql
 016_add_film_chunks_extraction.sql
+017_corrections_add_claim_status.sql
 ```
 
 Apply with `python scripts/migrate.py`. Script tracks applied migrations in a `schema_migrations` table.
@@ -408,9 +409,10 @@ CREATE TABLE corrections (
                   -- 'offensive_sets' | 'defensive_schemes' | 'pnr_coverage'
                   -- | 'player_pages' | 'game_plan' | 'adjustments_practice'
   phase           integer     NOT NULL DEFAULT 1,    -- 1 | 2 | 3 | 4 — which AI_STRATEGY phase
-  ai_claim        text        NOT NULL,              -- exact text Gemini/Claude produced
-  is_correct      boolean     NOT NULL,
-  correct_claim   text,                              -- Tommy's correction. null if is_correct = true.
+  ai_claim        text,                              -- exact text Gemini/Claude produced; null when claim_status='missed'
+  claim_status    text        NOT NULL,              -- 'captured' | 'missed' | 'hallucinated' (added migration 017)
+  is_correct      boolean     NOT NULL,              -- deprecated as of migration 017; drop scheduled post-launch
+  correct_claim   text,                              -- Tommy's correction. Required when claim_status='missed'.
   category        text        NOT NULL,
                   -- 'set_identification' | 'player_attribution' | 'frequency_count'
                   -- | 'tendency' | 'coverage_type' | 'personnel_evaluation'
@@ -420,7 +422,15 @@ CREATE TABLE corrections (
   prompt_version  text        NOT NULL,              -- which prompt version produced the ai_claim
   admin_notes     text,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  updated_at      timestamptz NOT NULL DEFAULT now()
+  updated_at      timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT corrections_claim_status_valid
+    CHECK (claim_status IN ('captured', 'missed', 'hallucinated')),
+  CONSTRAINT corrections_claim_text_present CHECK (
+    (claim_status = 'captured'     AND ai_claim IS NOT NULL) OR
+    (claim_status = 'hallucinated' AND ai_claim IS NOT NULL) OR
+    (claim_status = 'missed'       AND ai_claim IS NULL AND correct_claim IS NOT NULL)
+  )
   -- no deleted_at. corrections are permanent. they are the training dataset.
 );
 
@@ -430,7 +440,10 @@ CREATE INDEX idx_corrections_category ON corrections(category);
 CREATE INDEX idx_corrections_prompt_version ON corrections(prompt_version);
 CREATE INDEX idx_corrections_section_type ON corrections(section_type);
 CREATE INDEX idx_corrections_is_correct ON corrections(is_correct);
+CREATE INDEX idx_corrections_claim_status ON corrections(claim_status);
 ```
+
+**`is_correct`:** retained for backwards compatibility, deprecated as of migration 017 (`claim_status` is the new source of truth), drop scheduled post-launch.
 
 **Why so many indexes:** The weekly pattern analyzer queries this table along every dimension.
 `GROUP BY category WHERE prompt_version = X` — needs category + prompt_version.
