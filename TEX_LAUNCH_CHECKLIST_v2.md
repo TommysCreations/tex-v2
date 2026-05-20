@@ -47,8 +47,8 @@ Per-task status with PR numbers. Daily plans below break this into hour-by-hour 
 - [x] **R6** — corrections schema migration (`claim_status` column, `ai_claim` nullable) — PR #37, merged 2026-05-20
 - [x] **R13** — admin report-content endpoint (`GET /admin/reports/{report_id}`) — PR #38, merged 2026-05-20
 - [x] **R8** — golden-set listing + ground-truth fetch endpoints — PR #39, merged 2026-05-20
-- [x] **R7** — side-by-side grading canvas at `/admin/grade/[report_id]` — PR #40 (open 2026-05-20, awaiting Tommy's browser smoke test + merge)
-- [ ] **R9** — sentence-split claim walker (captured / missed / hallucinated buttons, keyboard shortcuts, claim N of M)
+- [x] **R7** — side-by-side grading canvas at `/admin/grade/[report_id]` — PR #40, merged 2026-05-20
+- [x] **R9** — sentence-split claim walker (captured / missed / hallucinated buttons, keyboard shortcuts, claim N of M) — PR #43 (open 2026-05-20, awaiting Tommy's browser smoke test + merge)
 - [ ] **R3+R10** — per-claim save wiring (extend `POST /admin/corrections` for `claim_status`, auto-populate report/film/section context, relax "correct_claim required when incorrect" check)
 - [ ] **R11** — `EVAL_SCORES.md` auto-writer (markdown table + JSONL sidecar)
 - [ ] **R12** — disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json`

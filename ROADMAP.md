@@ -11,14 +11,64 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39) merged or open against `main`. R7 side-by-side canvas opened as PR #40 against `main` from `feature/grading-ui` — awaiting Tommy's browser smoke test (admin auth-gated, can't be done from CI/agent). Next build item: R9 (sentence-split claim walker — captured / missed / hallucinated buttons + keyboard shortcuts, on top of the R7 canvas). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 of 9 done in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40) merged to `main`. R9 claim walker opened as PR #43 against `main` from `feature/grading-ui` — awaiting Tommy's browser smoke test (20-item checklist; admin auth-gated, can't be done from CI/agent). Next build item: R3+R10 (per-claim save wiring — extend `POST /admin/corrections` for `claim_status`, auto-populate report/film/section context from grading state). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 20, 2026 — R7 side-by-side grading canvas PR #40 open; awaiting Tommy's browser smoke test + merge.
+**Last Updated:** May 20, 2026 — R9 claim walker PR #43 open; R7 #40 + R8 #39 + R13 #38 + R6 #37 merged earlier today.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-20, night) — R9 claim-by-claim walker; build item 5 of 9:**
+
+R9 is the screen Tommy spends hours in for every grading session — claim-by-claim classification with keyboard shortcuts. Per `GRADING_UI_AUDIT.md` row R9, this is the unknown-effort piece of the build because claim extraction strategy drives cost. Decision locked 2026-05-19: **sentence-split v1**, deliberately lossy; structured-claims upgrade is post-MVP. Audit estimate was 4-6h. **R9 is pure client-side — no persistence, no backend changes.** R3+R10 wires the save in a follow-up PR; this split keeps the UX smoke-testable in isolation.
+
+*What landed (PR #43 on `feature/grading-ui`, commit `6c56757`):*
+- `frontend/lib/grading/splitClaims.ts` — sentence splitter. Drops pure-header lines (`#{1,6}\s+...`), pure bold-decoration lines (`**1. PRIMARY...**`), horizontal rules, and blank lines, then splits on sentence-terminating punctuation followed by whitespace (`/(?<=[.!?])\s+/`), then drops any sentence under 15 chars. Worked examples documented at the top of the file. Compound sentences become a single claim — Tommy uses Skip (S) for non-claims, and R3+R10's optional correction textarea will handle compound-claim nuance.
+- `frontend/lib/grading/sections.ts` — `SECTION_ORDER` + `SECTION_LABELS` + helpers, extracted from `page.tsx` so the walker can import them. Counts as in-scope for R9 per the build prompt.
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — walker component plus `useWalkerReducer` hook. State machine via `useReducer`: `cursor` (index into flat claims array, sorted by `SECTION_ORDER`), `classifications` (map keyed by claim id → `captured | missed | hallucinated | skipped`), `history` (claim ids in classification order, for undo), `sectionTransitionPending` (true when cursor just crossed a section boundary; gates the interstitial). Three sub-views: active claim card, section-transition interstitial, completion summary. Status values for the three real classes (`captured / missed / hallucinated`) match the corrections.claim_status enum exactly — R3+R10 maps them straight through.
+- `frontend/app/admin/grade/[report_id]/page.tsx` — mode toggle (`preview | walker`) added. Walker state held at this level via `useWalkerReducer` so it survives mode toggles within the same page-load. "Start grading" button in the right-pane header switches to walker. "Back to preview" in the walker switches back. **Preview rendering is untouched** — R7's existing SectionBlock layout is preserved exactly.
+
+*Keyboard contract (single `window` listener attached only while walker is mounted):*
+- `C` / `M` / `H` → classify + advance cursor + push to history
+- `S` → skip + advance (client-only status, R3+R10 filters out before writing)
+- `Enter` → advance without classifying (or acknowledge transition interstitial)
+- `←` / `→` / `J` / `K` → navigate without changing classification
+- `U` → single-step undo (pops history, clears classification, snaps cursor)
+- Modifier keys (Cmd/Ctrl/Alt) bypass the handler — Cmd+R reloads cleanly without firing C
+- Focus guard ignores keys when an INPUT/TEXTAREA/contenteditable has focus. R9 has no inputs in the walker; the guard is in place ahead of R3+R10's optional correction textarea.
+
+*Section flow:* when classifying a claim where the next one belongs to a different section, the reducer sets `sectionTransitionPending = true`. Walker renders the interstitial with per-section totals (captured / missed / hallucinated / skipped). Enter or the Continue button advances into the next section. Locked decision per the build prompt: section context matters for grading; do not auto-advance through boundaries.
+
+*Engineering-side verification (clean):*
+- `npx tsc --noEmit` → no output.
+- `npm run lint` → no new warnings on the three new files. Pre-existing `react-hooks/exhaustive-deps` warnings on other admin pages unchanged.
+- `npm run build` → succeeds. `/admin/grade/[report_id]` bundle grew from 49.1 kB (R7) to 52 kB (+walker + sentence splitter); first-load JS 175 kB.
+
+*What Tommy does next (browser smoke test — 20-item checklist in PR #43 body):*
+1. `docker compose up api worker redis` + `cd frontend && npm run dev`.
+2. Sign in as admin, navigate to `http://localhost:3000/admin/grade/970e57dd-256c-464a-9d25-78f29dd01135`.
+3. Walk the 20-item checklist. Two non-obvious items called out explicitly: **(19) console clean through full session** and **(20) zero new XHR/Fetch when entering walker mode** (walker reads R7's already-loaded report data — no new network).
+4. Merge PR #43.
+5. Then R3+R10 (per-claim save wiring — `POST /admin/corrections` extended for `claim_status`, auto-populate report/film/section context, relax "correct_claim required when incorrect" check). Audit estimate 3-4h.
+
+*Scope kept tight (intentionally not touched):*
+- `backend/` — anything. R9 is frontend-only. No corrections DB reads or writes. No `POST /admin/corrections` calls. All classifications live in React state.
+- R7's preview rendering of the right pane (additive change only).
+- R7's left pane (ground-truth markdown) — Tommy scrolls manually to find the matching claim; auto-jump / fuzzy-match is out of scope.
+- R11 (EVAL_SCORES.md writer), R12 (snapshot writer) — summary screen shows percentages but they are not written anywhere.
+- No new dependencies. React `useState` + `useReducer` are sufficient.
+
+*Judgment calls — original count 0; current state:*
+1. **Walker state lifetime — RESOLVED.** Brief specifies classifications survive mode toggles within the same page-load. First draft of Walker held state internally; lifting it to `page.tsx` via `useWalkerReducer` (exported from `Walker.tsx`) makes the survival contract trivial — Walker unmounts on mode toggle but the reducer keeps living in the parent. Documented in the file with a comment.
+2. **Section-component factoring — RESOLVED.** Build prompt §8 suggests extracting Walker into a sibling component file when "page.tsx gets crowded." Done — Walker.tsx holds the state machine + UI, page.tsx holds the mode toggle and owns the reducer instance.
+
+*Git state:*
+- Commits on `feature/grading-ui` since R7 merge: `6c56757` (R9 implementation).
+- PR: https://github.com/aidn31/tex-v2/pull/43
+
+---
 
 **Session log (2026-05-20, late evening) — R7 side-by-side grading canvas; build item 4 of 9:**
 
