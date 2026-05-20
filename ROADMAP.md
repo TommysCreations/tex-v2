@@ -11,14 +11,49 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — item 1 of 9 (R6 schema) done in PR.** Migration `017_corrections_add_claim_status.sql` is open in PR #37 against `main` from `feature/grading-ui`, awaiting Tommy's verification on Neon dev + merge. Next build item: R13 (admin endpoint exposing report section content for the grading walker). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Active Task:** **Grading UI build — items 1 + 2 of 9 done in PR.** R6 schema (PR #37) merged to `main` and pulled into `feature/grading-ui`. R13 admin report-content endpoint (PR #38) is open against `main` from the same branch, awaiting Tommy's auth-gated verification (200 / 404 / 422 with a real admin JWT) + merge. Next build item: R8 (ground-truth loader — `GET /admin/golden-set` list + `GET /admin/golden-set/{film_slug}/ground-truth` reader, plus the frontend selector). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 20, 2026 — R6 schema migration PR #37 open awaiting verification; ROADMAP entry added.
+**Last Updated:** May 20, 2026 — R13 admin endpoint PR #38 open awaiting auth-gated verification; ROADMAP entry added.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-20, evening) — R13 admin report-content endpoint for the grading UI; build item 2 of 9:**
+
+R13 is the read path the grading UI (R7 side-by-side, R9 claim walker) calls to render a generated report end-to-end. Per `GRADING_UI_AUDIT.md` row R13, the existing public `GET /reports/{id}` returns `SectionStatus` but **not** `report_sections.content` — the column the grader actually needs. PR #38 adds the admin-only endpoint that exposes it. Read-only, no schema work. Audit estimate was 3h.
+
+*What landed (PR #38, commit `a4537a4` on `feature/grading-ui`):*
+- `backend/routers/admin.py` — new `GET /admin/reports/{report_id}`. Admin-gated via the same `Depends(require_admin)` every other admin route uses (matches the `is_admin` audit row R1). Path param typed as `UUID` so non-UUID input returns 422 automatically. 404 with clean message when the report doesn't exist or `deleted_at IS NOT NULL`. No `user_id` scoping — admin sees everything, consistent with the rest of `admin.py`. One DB connection, three sequential parameterized queries inside a single `try/finally` (reports → films → sections). Sections returned in canonical PROMPTS.md order (`offensive_sets, defensive_schemes, pnr_coverage, player_pages, game_plan, adjustments_practice`) via `array_position(%s::text[], section_type)`. Missing rows are **not** fabricated — the consumer detects gaps by `section_type`.
+- `backend/models/schemas.py` — `AdminReportDetail`, `AdminReportFilm`, `AdminReportSection`. Both `report_prompt_version` (from `reports`) and per-section `prompt_version` (from `report_sections`) are returned. They can diverge; per-section value is the source of truth for which prompt produced a given section's content — matters because a correction's `prompt_version` field gets populated from the per-section value, not the report-level one.
+- `frontend/lib/api.ts` — `AdminReportDetail` interface (mirrors the Pydantic model field-for-field, strict mode, no `any`) and `getAdminReportDetail(token, reportId)` typed fetch wrapper. **No UI work.** R7 (side-by-side layout) is the consumer.
+
+*Local verification (engineering side — clean):*
+- `docker compose up -d --build api`: clean rebuild, `tex-v2-api-1` recreated and started.
+- `/health` → 200; `GET /openapi.json` confirms `/admin/reports/{report_id}` is registered.
+- `docker compose exec api python -c "from routers import admin; from models.schemas import AdminReportDetail; print('OK')"` → `OK`.
+- Frontend `cd frontend && npx tsc --noEmit` → no output (clean).
+- Unauthenticated probes against both `/admin/reports/00000000-0000-0000-0000-000000000000` and `/admin/reports/not-a-uuid` → `401 Missing authorization header`. Confirms the admin gate fires before path-param coercion (sub-dependencies resolve first), which is the correct ordering for an admin-only route.
+
+*What Tommy does next (auth-gated verification — checklist in PR #38 body):*
+1. Flag dev user `is_admin = true` on Neon dev (if not already).
+2. From `localhost:8001/docs`, hit `GET /admin/reports/{report_id}` with three inputs and paste the outputs into the PR body's "Auth-gated paths" placeholder:
+   - **200** — real `report_id` from dev (`SELECT id FROM reports ORDER BY created_at DESC LIMIT 1`). Confirm `report_id`, `report_prompt_version`, `films[]`, `sections[]` with `content` populated for completed sections.
+   - **404** — a random valid UUID that doesn't exist. Expect `{"detail":"Report not found"}`.
+   - **422** — garbage non-UUID path param. Expect FastAPI validation error.
+3. Bonus sanity: hit the endpoint with a non-admin token, expect `403 Admin access required`.
+4. Merge PR #38.
+5. Then R8 (ground-truth loader — `GET /admin/golden-set` list + `GET /admin/golden-set/{film_slug}/ground-truth` reader + frontend selector). Audit estimate 3-5h.
+
+*Scope kept tight (intentionally not touched):*
+- `backend/migrations/` (schema settled from R6), the `corrections` table and its routes, `frontend/app/admin/*` (no new pages), any prompt file, the pattern analysis endpoint, any other route or model. Per the build prompt at `docs/claude_code_prompts/grading_ui_build.md`.
+
+*Git state:*
+- Commits on `feature/grading-ui` since R6 merge: `a4537a4` (R13 backend + frontend wrapper). This commit adds the ROADMAP entry.
+- PR: https://github.com/aidn31/tex-v2/pull/38
+
+---
 
 **Session log (2026-05-20) — R6 schema migration for the corrections table; grading UI build item 1 of 9:**
 
