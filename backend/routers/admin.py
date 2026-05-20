@@ -77,14 +77,24 @@ GOLDEN_SET_ROOT = Path(
 GOLDEN_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+# Slugs whose algorithmic display name needs an acronym override. Title-case
+# alone can't tell 'bbe' (acronym) from 'team' (word). Keep this list short
+# and only add entries when the algorithmic output is wrong.
+DISPLAY_NAME_OVERRIDES = {
+    "film_01_bbe_vs_team_durant": "Film 01 — BBE vs Team Durant",
+    "film_02_rebels_vs_az_unity": "Film 02 — Rebels vs AZ Unity",
+}
+
+
 def _slug_to_display_name(slug: str) -> str:
     """Humanize a golden-set slug for display.
 
     `film_NN_x_vs_y` → `Film NN — X vs Y`. Title-cases every token except
-    'vs', which stays lowercase. Acronyms in the slug (e.g. 'bbe', 'az')
-    are not preserved as uppercase — add a hardcoded display-name override
-    if that's needed for a given film.
+    'vs', which stays lowercase. Acronyms (BBE, AZ) live in
+    DISPLAY_NAME_OVERRIDES — title-case alone can't disambiguate them.
     """
+    if slug in DISPLAY_NAME_OVERRIDES:
+        return DISPLAY_NAME_OVERRIDES[slug]
     tokens = slug.split("_")
     if len(tokens) < 3 or tokens[0].lower() != "film":
         return slug.replace("_", " ")
