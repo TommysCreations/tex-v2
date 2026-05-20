@@ -7,12 +7,21 @@ Per CLAUDE.md:
 """
 
 import logging
+import os
+import re
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from models.schemas import AdminReportDetail, AdminReportFilm, AdminReportSection
+from models.schemas import (
+    AdminReportDetail,
+    AdminReportFilm,
+    AdminReportSection,
+    GoldenFilm,
+    GroundTruthDocument,
+)
 from services.clerk import require_admin
 from services.db import get_connection
 
@@ -53,6 +62,111 @@ CANONICAL_SECTION_ORDER = [
     "game_plan",
     "adjustments_practice",
 ]
+
+
+# Golden-set ground-truth files live outside the backend tree. In the Docker
+# dev stack ./golden_set is mounted read-only at /golden_set. Production
+# (Cloud Run) will need a different strategy — bake into image or pull from
+# R2 — per GRADING_UI_AUDIT.md ("productionize later if needed").
+GOLDEN_SET_ROOT = Path(
+    os.environ.get("GOLDEN_SET_ROOT", "/golden_set")
+).resolve()
+# Slug accepted from URL path. Restricted to characters that can appear in a
+# directory name we control. Anything outside this set is rejected with 400
+# before any filesystem access.
+GOLDEN_SLUG_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+# Slugs whose algorithmic display name needs an acronym override. Title-case
+# alone can't tell 'bbe' (acronym) from 'team' (word). Keep this list short
+# and only add entries when the algorithmic output is wrong.
+DISPLAY_NAME_OVERRIDES = {
+    "film_01_bbe_vs_team_durant": "Film 01 — BBE vs Team Durant",
+    "film_02_rebels_vs_az_unity": "Film 02 — Rebels vs AZ Unity",
+}
+
+
+def _slug_to_display_name(slug: str) -> str:
+    """Humanize a golden-set slug for display.
+
+    `film_NN_x_vs_y` → `Film NN — X vs Y`. Title-cases every token except
+    'vs', which stays lowercase. Acronyms (BBE, AZ) live in
+    DISPLAY_NAME_OVERRIDES — title-case alone can't disambiguate them.
+    """
+    if slug in DISPLAY_NAME_OVERRIDES:
+        return DISPLAY_NAME_OVERRIDES[slug]
+    tokens = slug.split("_")
+    if len(tokens) < 3 or tokens[0].lower() != "film":
+        return slug.replace("_", " ")
+    rest = " ".join(t if t == "vs" else t.capitalize() for t in tokens[2:])
+    return f"Film {tokens[1]} — {rest}"
+
+
+# ---------------------------------------------------------------------------
+# R8 — GET /admin/golden-set (grading UI)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/golden-set", response_model=list[GoldenFilm])
+async def list_golden_films(user: dict = Depends(require_admin)):
+    """List available golden films — one entry per subdirectory containing
+    a `ground_truth.md` file.
+    """
+    if not GOLDEN_SET_ROOT.is_dir():
+        return []
+    films: list[GoldenFilm] = []
+    for entry in sorted(GOLDEN_SET_ROOT.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "ground_truth.md").is_file():
+            continue
+        slug = entry.name
+        if not GOLDEN_SLUG_PATTERN.match(slug):
+            # Skip oddly-named directories rather than expose them. They
+            # cannot be fetched through the GET-by-slug endpoint anyway.
+            continue
+        films.append(GoldenFilm(slug=slug, display_name=_slug_to_display_name(slug)))
+    return films
+
+
+# ---------------------------------------------------------------------------
+# R8 — GET /admin/golden-set/{film_slug}/ground-truth (grading UI)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/golden-set/{film_slug}/ground-truth",
+    response_model=GroundTruthDocument,
+)
+async def get_ground_truth(
+    film_slug: str,
+    user: dict = Depends(require_admin),
+):
+    """Return the raw markdown of `golden_set/{film_slug}/ground_truth.md`.
+
+    Frontend renders the markdown — this endpoint does no parsing.
+    """
+    if not GOLDEN_SLUG_PATTERN.match(film_slug):
+        raise HTTPException(status_code=400, detail="Invalid film_slug")
+
+    candidate = (GOLDEN_SET_ROOT / film_slug).resolve()
+    # Defense in depth: even with the regex, confirm the resolved path is
+    # still inside GOLDEN_SET_ROOT before any read.
+    if (
+        candidate != GOLDEN_SET_ROOT
+        and GOLDEN_SET_ROOT not in candidate.parents
+    ):
+        raise HTTPException(status_code=400, detail="Invalid film_slug")
+
+    if not candidate.is_dir():
+        raise HTTPException(status_code=404, detail="Golden film not found")
+
+    ground_truth_path = candidate / "ground_truth.md"
+    if not ground_truth_path.is_file():
+        raise HTTPException(status_code=404, detail="ground_truth.md not found")
+
+    content = ground_truth_path.read_text(encoding="utf-8")
+    return GroundTruthDocument(slug=film_slug, content=content)
 
 
 # ---------------------------------------------------------------------------

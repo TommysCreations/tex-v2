@@ -167,6 +167,19 @@ class AdminReportDetail(BaseModel):
     sections: list[AdminReportSection] = []
 
 
+# --- Admin: golden-set ground-truth loader (R8 — consumed by grading UI) ---
+
+
+class GoldenFilm(BaseModel):
+    slug: str
+    display_name: str
+
+
+class GroundTruthDocument(BaseModel):
+    slug: str
+    content: str
+
+
 # --- Stripe ---
 
 
