@@ -495,6 +495,11 @@ async def create_correction(
 EVAL_SCORES_ROOT = Path(os.environ.get("EVAL_SCORES_ROOT", "/repo")).resolve()
 EVAL_SCORES_MD = EVAL_SCORES_ROOT / "EVAL_SCORES.md"
 EVAL_SCORES_JSONL = EVAL_SCORES_ROOT / "EVAL_SCORES.jsonl"
+# R12: per-session JSON flight-recorder. Full report content + every walker
+# verdict + the ground-truth reference, one file per completed session. Lives
+# alongside EVAL_SCORES.md so all eval artifacts share one mount point.
+EVAL_SNAPSHOTS_DIR = EVAL_SCORES_ROOT / "eval_snapshots"
+SNAPSHOT_SCHEMA_VERSION = "1"
 
 # Markdown header written once on first session. Pipes in user-supplied
 # fields are escaped before render — the schema itself uses only safe chars.
@@ -515,6 +520,11 @@ class GradingSessionComplete(BaseModel):
     prompt_version: str
     session_started_at: datetime
     notes: str | None = None
+    # R12: optional golden-film slug the grader had selected in the UI. Used
+    # only to populate ground_truth_ref in the snapshot file. Validated against
+    # GOLDEN_SLUG_PATTERN; anything else falls back to None ("better null
+    # than wrong").
+    film_slug: str | None = None
 
 
 def _md_escape(s: str) -> str:
@@ -588,6 +598,29 @@ async def complete_grading_session(
                 )
                 row = cur.fetchone()
                 film_id = row[0] if row else None
+
+            # R12: snapshot needs the full report text + every per-claim
+            # verdict from this session. Same connection, run alongside the
+            # rollup queries so we don't reopen later.
+            cur.execute(
+                "SELECT section_type, content "
+                "FROM report_sections WHERE report_id = %s",
+                (body.report_id,),
+            )
+            section_rows = cur.fetchall()
+
+            cur.execute(
+                "SELECT section_type, claim_status, ai_claim, correct_claim, "
+                "created_at "
+                "FROM corrections "
+                "WHERE report_id = %s "
+                "  AND prompt_version = %s "
+                "  AND category = 'walker_v1' "
+                "  AND created_at >= %s "
+                "ORDER BY created_at ASC",
+                (body.report_id, body.prompt_version, body.session_started_at),
+            )
+            classification_rows = cur.fetchall()
     finally:
         conn.close()
 
@@ -662,6 +695,87 @@ async def complete_grading_session(
             detail=f"Failed to write EVAL_SCORES at {EVAL_SCORES_ROOT}: {e}",
         )
 
+    # R12: flight-recorder snapshot. Runs after the EVAL_SCORES writes so a
+    # snapshot failure can't block the ledger row (the rollup is the
+    # longitudinal signal — the snapshot is the forensic backup). On
+    # snapshot-only failures we surface the error in the response without
+    # raising, so the frontend can show a soft warning.
+    snapshot_path: str | None = None
+    snapshot_error: str | None = None
+
+    # ground_truth_ref: only set if the grader's selected slug passes the same
+    # regex we apply to /admin/golden-set URLs. Anything else → null, per
+    # spec ("better null than wrong").
+    ground_truth_ref: str | None = None
+    if body.film_slug and GOLDEN_SLUG_PATTERN.match(body.film_slug):
+        ground_truth_ref = f"golden_set/{body.film_slug}/ground_truth.md"
+
+    report_content = {
+        section_type: content for section_type, content in section_rows
+    }
+    classifications = [
+        {
+            "section_type": r[0],
+            "claim_status": r[1],
+            "ai_claim": r[2],
+            "correct_claim": r[3],
+            "created_at": r[4].isoformat() if r[4] else None,
+        }
+        for r in classification_rows
+    ]
+
+    snapshot = {
+        "snapshot_version": SNAPSHOT_SCHEMA_VERSION,
+        "report_id": body.report_id,
+        "film_id": film_id,
+        "prompt_version": body.prompt_version,
+        "graded_at": iso_timestamp,
+        "session_started_at": body.session_started_at.astimezone(timezone.utc)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "notes": notes,
+        "rollup": {
+            "total_claims": total,
+            "captured": counts["captured"],
+            "missed": counts["missed"],
+            "hallucinated": counts["hallucinated"],
+            "captured_pct": captured_pct,
+            "missed_pct": missed_pct,
+            "hallucinated_pct": hallucinated_pct,
+        },
+        "report_content": report_content,
+        "ground_truth_ref": ground_truth_ref,
+        "classifications": classifications,
+    }
+
+    # Filename: {film_id}_{prompt_version}_{ISO8601_compact}.json. Colons in
+    # the timestamp are replaced with hyphens so the name is safe on Windows
+    # / macOS as well as Linux. Falls back to "unknown" if film_id is null
+    # (zero-classification session against a report with no films).
+    compact_ts = now.strftime("%Y-%m-%dT%H-%M-%SZ")
+    safe_film_id = film_id or "unknown"
+    safe_prompt_version = re.sub(r"[^A-Za-z0-9._-]", "_", body.prompt_version)
+    snapshot_filename = f"{safe_film_id}_{safe_prompt_version}_{compact_ts}.json"
+    snapshot_file = EVAL_SNAPSHOTS_DIR / snapshot_filename
+
+    try:
+        EVAL_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+        snapshot_file.write_text(
+            json.dumps(snapshot, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        snapshot_path = f"eval_snapshots/{snapshot_filename}"
+    except OSError as e:
+        snapshot_error = str(e)
+        logger.error(
+            "Eval snapshot write failed",
+            extra={
+                "report_id": body.report_id,
+                "prompt_version": body.prompt_version,
+                "path": str(snapshot_file),
+                "error": snapshot_error,
+            },
+        )
+
     logger.info(
         "Grading session logged to EVAL_SCORES",
         extra={
@@ -671,9 +785,13 @@ async def complete_grading_session(
             "captured": counts["captured"],
             "missed": counts["missed"],
             "hallucinated": counts["hallucinated"],
+            "snapshot_path": snapshot_path,
+            "snapshot_error": snapshot_error,
         },
     )
 
+    rollup["snapshot_path"] = snapshot_path
+    rollup["snapshot_error"] = snapshot_error
     return rollup
 
 

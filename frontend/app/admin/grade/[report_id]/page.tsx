@@ -251,8 +251,12 @@ export default function GradeReportPage() {
       report_id: report.report_id,
       prompt_version: report.report_prompt_version,
       session_started_at: sessionStartedAt,
+      // R12: pass the grader's selected golden slug so the snapshot's
+      // ground_truth_ref points at the file that was on screen during the
+      // session. Empty/unselected → omit, backend sets ref to null.
+      film_slug: selectedSlug || undefined,
     });
-  }, [report]);
+  }, [report, selectedSlug]);
 
   const canStartGrading = !!report && !!filmId && claims.length > 0;
 
