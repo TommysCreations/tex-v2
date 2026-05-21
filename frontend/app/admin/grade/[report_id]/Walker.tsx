@@ -526,18 +526,22 @@ function ClassifyButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  // Base is intentionally neutral (gray) so the selected tone visibly pops
+  // on back-navigation. Without this, every claim's button row looks the
+  // same as a fresh unclassified claim and the grader loses their place
+  // across 38 claims × 6 sections.
   const tones: Record<typeof tone, { base: string; active: string }> = {
     captured: {
-      base: 'border-green-500/40 text-green-300 hover:bg-green-500/10',
-      active: 'bg-green-500/20 text-green-200 border-green-500/70',
+      base: 'border-border text-gray-300 hover:border-green-500/50 hover:text-green-300 hover:bg-green-500/10',
+      active: 'bg-green-600 text-white border-green-500 ring-2 ring-green-400/70',
     },
     missed: {
-      base: 'border-amber-500/40 text-amber-300 hover:bg-amber-500/10',
-      active: 'bg-amber-500/20 text-amber-200 border-amber-500/70',
+      base: 'border-border text-gray-300 hover:border-amber-500/50 hover:text-amber-300 hover:bg-amber-500/10',
+      active: 'bg-amber-500 text-black border-amber-400 ring-2 ring-amber-300/70',
     },
     hallucinated: {
-      base: 'border-red-500/40 text-red-300 hover:bg-red-500/10',
-      active: 'bg-red-500/20 text-red-200 border-red-500/70',
+      base: 'border-border text-gray-300 hover:border-red-500/50 hover:text-red-300 hover:bg-red-500/10',
+      active: 'bg-red-600 text-white border-red-500 ring-2 ring-red-400/70',
     },
   };
   const cls = active ? tones[tone].active : tones[tone].base;
