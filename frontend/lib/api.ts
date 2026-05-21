@@ -408,6 +408,44 @@ export function createGradingCorrection(
   });
 }
 
+// R11: session-complete rollup. The summary screen fires this once when
+// the grader finishes walking the report. Backend reads walker_v1 rows
+// keyed by (report_id, prompt_version, created_at >= session_started_at),
+// writes one line to EVAL_SCORES.md + EVAL_SCORES.jsonl at the repo root,
+// returns the same payload it wrote.
+export interface GradingSessionCompleteInput {
+  report_id: string;
+  prompt_version: string;
+  session_started_at: string;
+  notes?: string;
+}
+
+export interface GradingSessionRollup {
+  timestamp: string;
+  film_id: string | null;
+  report_id: string;
+  prompt_version: string;
+  total_claims: number;
+  captured: number;
+  missed: number;
+  hallucinated: number;
+  captured_pct: number;
+  missed_pct: number;
+  hallucinated_pct: number;
+  notes: string;
+}
+
+export function completeGradingSession(
+  token: string,
+  input: GradingSessionCompleteInput,
+): Promise<GradingSessionRollup> {
+  return apiFetch('/admin/grading-sessions/complete', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
 export function getPatternAnalysis(
   token: string,
   promptVersion?: string,

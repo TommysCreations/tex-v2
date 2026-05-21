@@ -11,14 +11,46 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 merged.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44) merged to `main`. **R9 walker visual-state polish opened as a follow-up PR on `feature/grading-ui` — neutral base / saturated active per tone, so a previously-classified claim is visually obvious when the grader navigates back. Tommy to smoke-test and merge.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
-**Blockers:** None code-side for the walker. Phase 3.17 still waiting on grading-UI polish + R11/R12 before formal Stage 1 grading runs.
-**Last Updated:** May 21, 2026 — R9 visual-state follow-up PR opened on `feature/grading-ui` after #44 merge.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 + R9-visual merged.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44), R9 visual polish (#45) merged to `main`. **R11 (EVAL_SCORES.md + JSONL auto-writer) opened as a follow-up PR on `feature/grading-ui`. Backend appends one row to `EVAL_SCORES.md` and one line to `EVAL_SCORES.jsonl` at the repo root when the walker reaches the session-complete summary; rollup keyed by (report_id, prompt_version, walker_v1, created_at >= session_started_at). Repo root mounted rw at `/repo` in the API container via `docker-compose.yml`. Tommy to smoke-test and merge.** Next build item: R12 (disk snapshot of the full graded report). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Blockers:** None code-side. Phase 3.17 still waiting on R12 (disk snapshot) and the integration test pass before formal Stage 1 grading runs.
+**Last Updated:** May 21, 2026 — R11 EVAL_SCORES auto-writer PR opened on `feature/grading-ui` after #45 merge.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-21, after #45 merge) — R11 EVAL_SCORES.md + JSONL auto-writer; build item 7 of 9:**
+
+R11 closes the eval loop. Until this PR every grading session was throw-away as a *summary* — per-claim rows hit the corrections table (since #44) but there was no single-line ledger to spot longitudinal accuracy trends across prompt versions. R11 writes that ledger to disk on each session-complete.
+
+*Pre-build decision surfaced and resolved (CLAUDE.md decision protocol):*
+- **EVAL_SCORES.md write path from inside Docker — RESOLVED via Option 1 (mount repo root rw at `/repo`).** The API container in `docker-compose.yml` only mounted `./backend` and `./golden_set:ro`. Without a repo-root mount, FastAPI writes to `/EVAL_SCORES.md` in container land — the host repo root never sees the file and `git add` is impossible. Options were (a) mount `./:/repo:rw`, (b) mount only `./eval/`, (c) write inside `./backend`. Tommy picked (a) — matches the spec's "repo root" wording, dev-only setup, blast radius is acceptable because grading is dev-only. Production never grades.
+
+*What landed (commit on `feature/grading-ui`):*
+- `docker-compose.yml` — new `./:/repo:rw` bind mount on the api service so writes land on the host filesystem.
+- `backend/routers/admin.py` — new `POST /admin/grading-sessions/complete` route. Pydantic `GradingSessionComplete` body: `report_id`, `prompt_version`, `session_started_at` (datetime), optional `notes`. Verifies the report exists (404 otherwise). Rollup query: `SELECT claim_status, COUNT(*), MAX(film_id) FROM corrections WHERE report_id=%s AND prompt_version=%s AND category='walker_v1' AND created_at >= session_started_at GROUP BY claim_status`. Zero-classification sessions fall back to `report_films` for `film_id` so even an empty session logs a row. `EVAL_SCORES_ROOT` env var defaults to `/repo` (the container mount point). File creation is idempotent — markdown header is written exactly once on first session, JSONL has no header. Pipes + newlines in user-supplied fields (notes, prompt_version) are escaped via `_md_escape` so the table can't be broken by a stray character. Filesystem failures (permission, missing mount) return 500 with the path embedded so the network-tab error is debuggable.
+- `frontend/lib/api.ts` — new `completeGradingSession` typed wrapper + `GradingSessionRollup` interface matching the response shape.
+- `frontend/app/admin/grade/[report_id]/page.tsx` — `sessionStartedAtRef` captures the ISO timestamp the first time `mode` becomes `walker`, never moves once set. Reset on full page reload (acceptable for v1). `onCompleteSession` callback fetches a fresh token via the existing `getTokenRef`, calls `completeGradingSession`, returns the rollup. Threaded into Walker as a prop.
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — SummaryScreen now accepts `onCompleteSession`. A ref-guarded `useEffect` fires the POST exactly once on mount (React 18 strict-mode safe — the second effect call in dev is a no-op). Banner shows `Writing EVAL_SCORES.md…` / `✅ EVAL_SCORES.md updated · session logged (N claims, prompt vX)` / `⚠ EVAL_SCORES.md write failed — see network tab. (error)`. The amber R11/R12-pending warning is replaced by the real status; an inline note still flags that R12 (disk snapshot) is the next PR.
+
+*Session identity semantics (locked):* `session_started_at` is set by the frontend on first walker entry. Re-grading the same report opens a new session timestamp on next page load, so each grading pass appends its own EVAL_SCORES row. Skipped claims (S) write no corrections row, so they don't enter the rollup — `total = captured + missed + hallucinated`, percentages relative to that total. This matches the eval-loop's "what fraction of TEX's claims did the grader confirm vs reject" framing.
+
+*Engineering-side verification (clean):*
+- `npx tsc --noEmit` in `frontend/` → no output.
+- `python3 -c "import ast; ast.parse(open('backend/routers/admin.py').read())"` → syntax OK.
+
+*Out of scope (intentionally untouched):* corrections table schema, walker classification flow, keyboard shortcuts, undo, R3+R10 save wiring, legacy `/admin` form, Pattern Analyzer. R12 (disk snapshot of the full graded report) is the next PR.
+
+*What Tommy does next:*
+1. `docker compose up api worker redis` + `cd frontend && npm run dev`. The new `/repo` mount is picked up at container restart — `docker compose down && up` if the api container was already running.
+2. Open `/admin/grade/[report_id]`, click Start grading, classify a handful of claims (mix of C/M/H), walk to the end.
+3. On the summary screen, confirm the green `✅ EVAL_SCORES.md updated` banner appears.
+4. On the host: `cat EVAL_SCORES.md` — one header block + one row. `cat EVAL_SCORES.jsonl` — one JSON line. Both at the repo root.
+5. Re-grade the same report → second row appended, header unchanged.
+6. Merge PR.
+
+---
 
 **Session log (2026-05-21, after #44 merge) — R9 walker visual-state polish; follow-up PR on `feature/grading-ui`:**
 
