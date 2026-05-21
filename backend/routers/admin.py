@@ -10,6 +10,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -39,13 +40,20 @@ class CorrectionCreate(BaseModel):
     report_id: str
     film_id: str
     section_type: str
-    ai_claim: str
-    is_correct: bool
+    # R3+R10: claim_status is the new source of truth. is_correct is retained
+    # for backwards compatibility with reads in list/pattern endpoints and the
+    # legacy single-correction form. When is_correct is omitted, it's derived
+    # server-side from claim_status (captured → true, missed/hallucinated → false).
+    claim_status: Literal["captured", "missed", "hallucinated"]
+    ai_claim: str | None = None
+    is_correct: bool | None = None
     correct_claim: str | None = None
     category: str
     confidence: str = "high"
     prompt_version: str
     admin_notes: str | None = None
+    phase: int = 1
+    game_count: int | None = None
 
 
 class CreditGrant(BaseModel):
@@ -347,6 +355,11 @@ VALID_CATEGORIES = {
     "coverage_type",
     "personnel_evaluation",
     "strategic_reasoning",
+    # R3+R10: walker writes use 'walker_v1' because the v1 sentence-split
+    # walker has no UI to elicit error-type per claim. Pattern analyzer
+    # by_category treats this as a separate bucket; structured-claims v2
+    # will replace it with LLM-emitted per-claim categories.
+    "walker_v1",
 }
 VALID_CONFIDENCE = {"high", "medium", "low"}
 
@@ -356,17 +369,62 @@ async def create_correction(
     body: CorrectionCreate,
     user: dict = Depends(require_admin),
 ):
-    """Save a correction for a specific AI claim in a report section."""
+    """Save a correction for a specific AI claim in a report section.
+
+    R3+R10: accepts claim_status as the new source of truth. is_correct is
+    derived from claim_status (captured → true, missed/hallucinated → false)
+    unless the caller passes it explicitly. ai_claim is optional for Missed
+    rows (some workflows don't have an AI-text anchor); correct_claim is
+    always optional. App-layer validation enforces semantic invariants beyond
+    what the DB CHECK constraint covers.
+    """
     if body.section_type not in VALID_SECTION_TYPES:
         raise HTTPException(status_code=400, detail=f"Invalid section_type: {body.section_type}")
     if body.category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Invalid category: {body.category}")
     if body.confidence not in VALID_CONFIDENCE:
         raise HTTPException(status_code=400, detail=f"Invalid confidence: {body.confidence}")
-    if not body.is_correct and not body.correct_claim:
+
+    # captured/hallucinated must have an AI claim — the row's whole purpose
+    # is to anchor a training signal to model-produced text.
+    if body.claim_status in ("captured", "hallucinated") and not body.ai_claim:
         raise HTTPException(
-            status_code=400, detail="correct_claim is required when is_correct is false"
+            status_code=400,
+            detail=f"ai_claim is required when claim_status is '{body.claim_status}'",
         )
+    # captured + correct_claim is nonsensical — a confirmed claim has no
+    # correction. Reject so the dataset can't accumulate ambiguous rows.
+    if body.claim_status == "captured" and body.correct_claim:
+        raise HTTPException(
+            status_code=400,
+            detail="correct_claim must be empty when claim_status is 'captured'",
+        )
+    # Missed needs *something* to anchor — either the TEX sentence the grader
+    # pressed M on (v1 walker) or the ground-truth text (future v2). The DB
+    # CHECK enforces the same minimum; this is the friendlier app-layer error.
+    if body.claim_status == "missed" and not body.ai_claim and not body.correct_claim:
+        raise HTTPException(
+            status_code=400,
+            detail="missed rows require at least one of ai_claim or correct_claim",
+        )
+
+    # Derive is_correct from claim_status if not provided; warn if the caller
+    # passed an inconsistent value (keep the explicit one but flag it).
+    derived_is_correct = body.claim_status == "captured"
+    if body.is_correct is None:
+        is_correct = derived_is_correct
+    else:
+        is_correct = body.is_correct
+        if is_correct != derived_is_correct:
+            logger.warning(
+                "is_correct passed inconsistently with claim_status",
+                extra={
+                    "report_id": body.report_id,
+                    "claim_status": body.claim_status,
+                    "is_correct_explicit": body.is_correct,
+                    "is_correct_derived": derived_is_correct,
+                },
+            )
 
     conn = get_connection()
     try:
@@ -381,24 +439,30 @@ async def create_correction(
 
             cur.execute(
                 "INSERT INTO corrections "
-                "(report_id, film_id, section_type, ai_claim, is_correct, "
-                "correct_claim, category, confidence, prompt_version, admin_notes) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "RETURNING id",
+                "(report_id, film_id, section_type, ai_claim, claim_status, "
+                "is_correct, correct_claim, category, confidence, prompt_version, "
+                "admin_notes, phase, game_count) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "RETURNING id, created_at",
                 (
                     body.report_id,
                     body.film_id,
                     body.section_type,
                     body.ai_claim,
-                    body.is_correct,
+                    body.claim_status,
+                    is_correct,
                     body.correct_claim,
                     body.category,
                     body.confidence,
                     body.prompt_version,
                     body.admin_notes,
+                    body.phase,
+                    body.game_count,
                 ),
             )
-            correction_id = str(cur.fetchone()[0])
+            row = cur.fetchone()
+            correction_id = str(row[0])
+            created_at = row[1]
         conn.commit()
     finally:
         conn.close()
@@ -409,11 +473,14 @@ async def create_correction(
             "correction_id": correction_id,
             "report_id": body.report_id,
             "section_type": body.section_type,
-            "is_correct": body.is_correct,
+            "claim_status": body.claim_status,
+            "is_correct": is_correct,
             "category": body.category,
+            "prompt_version": body.prompt_version,
+            "has_correction_text": bool(body.correct_claim),
         },
     )
-    return {"id": correction_id}
+    return {"id": correction_id, "created_at": created_at.isoformat()}
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,13 @@
 'use client';
 
-import { Dispatch, useCallback, useEffect, useReducer } from 'react';
+import {
+  Dispatch,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { AdminReportSection } from '@/lib/api';
 import { SECTION_ORDER, sectionLabel, sectionOrderIndex } from '@/lib/grading/sections';
 import { Claim, splitClaims } from '@/lib/grading/splitClaims';
@@ -26,6 +33,15 @@ export type WalkerState = {
   history: string[];
   sectionTransitionPending: boolean;
 };
+
+// R3+R10: parent owns persistence. Walker fires this when a classification
+// happens; saves are fire-and-forget so a slow network never blocks the
+// session. Parent tracks pending retries and surfaces failures.
+export type SaveClassificationFn = (
+  claim: Claim,
+  status: 'captured' | 'missed' | 'hallucinated',
+  correctClaim: string | null,
+) => void;
 
 export const INITIAL_WALKER_STATE: WalkerState = {
   cursor: 0,
@@ -102,6 +118,12 @@ export function useWalkerReducer(
           };
         }
         case 'undo': {
+          // R3+R10 Path A: undo is UI-local only. The corresponding DB row
+          // (if one was written) stays put — corrections are append-only by
+          // design. If the grader re-classifies, a NEW row is written and
+          // the latest by created_at per (report_id, ai_claim, section_type)
+          // is authoritative. This keeps the audit trail intact and avoids
+          // needing a DELETE endpoint.
           if (state.history.length === 0) return state;
           const lastId = state.history[state.history.length - 1];
           const targetIndex = claims.findIndex((c) => c.id === lastId);
@@ -133,13 +155,83 @@ export default function Walker({
   state,
   dispatch,
   onExit,
+  onSaveClassification,
+  saveErrorCount,
+  pendingRetryCount,
+  savedCount,
 }: {
   claims: Claim[];
   state: WalkerState;
   dispatch: Dispatch<WalkerAction>;
   onExit: () => void;
+  onSaveClassification: SaveClassificationFn;
+  saveErrorCount: number;
+  pendingRetryCount: number;
+  savedCount: number;
 }) {
   const transitionPending = state.sectionTransitionPending;
+
+  // R3+R10: text-entry mode. When the grader presses M or H, we open a
+  // textarea instead of advancing immediately. Enter commits with text. Esc
+  // or blur cancel cleanly — no row written, no advance, claim stays
+  // unclassified — so an in-flight correction never gets silently dropped
+  // when the grader tabs away mid-typing. C bypasses this entirely (no
+  // correction text makes sense for a captured claim). State is local to
+  // the Walker because it only exists during the brief in-claim text-entry
+  // interaction.
+  const [pendingTextEntry, setPendingTextEntry] = useState<{
+    claimId: string;
+    status: 'missed' | 'hallucinated';
+    text: string;
+  } | null>(null);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-focus the textarea when it appears for a new claim/status.
+  useEffect(() => {
+    if (pendingTextEntry) {
+      textareaRef.current?.focus();
+    }
+  }, [pendingTextEntry?.claimId, pendingTextEntry?.status]);
+
+  function handleClassify(status: Exclude<ClaimStatus, null>) {
+    if (state.cursor >= claims.length || transitionPending) return;
+    const current = claims[state.cursor];
+
+    if (status === 'captured') {
+      // No correction text for captured. Fire save, advance.
+      onSaveClassification(current, 'captured', null);
+      dispatch({ type: 'classify', status: 'captured' });
+      return;
+    }
+    if (status === 'skipped') {
+      // Skip writes no row.
+      dispatch({ type: 'classify', status: 'skipped' });
+      return;
+    }
+    // missed / hallucinated → open textarea, don't advance yet.
+    setPendingTextEntry({ claimId: current.id, status, text: '' });
+  }
+
+  function commitPendingTextEntry(text: string | null) {
+    if (!pendingTextEntry) return;
+    const claim = claims.find((c) => c.id === pendingTextEntry.claimId);
+    if (!claim) {
+      setPendingTextEntry(null);
+      return;
+    }
+    onSaveClassification(claim, pendingTextEntry.status, text);
+    dispatch({ type: 'classify', status: pendingTextEntry.status });
+    setPendingTextEntry(null);
+  }
+
+  // Close the textarea without writing a row or advancing. Used by Esc and
+  // blur so the claim stays unclassified and the grader can retry M/H or
+  // pick a different status. Prevents silent data loss when focus leaves
+  // mid-typing.
+  function cancelPendingTextEntry() {
+    setPendingTextEntry(null);
+  }
 
   // Keyboard handling. Single global listener — torn down when the walker
   // unmounts (i.e. when the user returns to preview mode).
@@ -149,10 +241,17 @@ export default function Walker({
       if (target) {
         const tag = target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) {
+          // The textarea handles its own Enter/Esc; the global handler
+          // stays out of the way so the grader can type freely.
           return;
         }
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Block global shortcuts while text-entry is pending — the textarea
+      // is the focused element by default, but a blur could otherwise leak
+      // C/M/H presses into the walker mid-correction.
+      if (pendingTextEntry) return;
 
       // When a section-transition interstitial is showing, only Enter
       // advances. Other keys are no-ops to avoid double-classifying past
@@ -168,19 +267,19 @@ export default function Walker({
       switch (e.key.toLowerCase()) {
         case 'c':
           e.preventDefault();
-          dispatch({ type: 'classify', status: 'captured' });
+          handleClassify('captured');
           break;
         case 'm':
           e.preventDefault();
-          dispatch({ type: 'classify', status: 'missed' });
+          handleClassify('missed');
           break;
         case 'h':
           e.preventDefault();
-          dispatch({ type: 'classify', status: 'hallucinated' });
+          handleClassify('hallucinated');
           break;
         case 's':
           e.preventDefault();
-          dispatch({ type: 'classify', status: 'skipped' });
+          handleClassify('skipped');
           break;
         case 'enter':
           e.preventDefault();
@@ -204,7 +303,11 @@ export default function Walker({
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dispatch, transitionPending]);
+    // handleClassify is stable enough at this granularity — we depend on
+    // pendingTextEntry to gate it. Re-evaluated when transitionPending or
+    // pendingTextEntry changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatch, transitionPending, pendingTextEntry, claims, state.cursor]);
 
   if (claims.length === 0) {
     return (
@@ -223,7 +326,16 @@ export default function Walker({
 
   const isComplete = state.cursor >= claims.length;
   if (isComplete) {
-    return <SummaryScreen claims={claims} classifications={state.classifications} onExit={onExit} />;
+    return (
+      <SummaryScreen
+        claims={claims}
+        classifications={state.classifications}
+        savedCount={savedCount}
+        saveErrorCount={saveErrorCount}
+        pendingRetryCount={pendingRetryCount}
+        onExit={onExit}
+      />
+    );
   }
 
   if (transitionPending) {
@@ -276,23 +388,74 @@ export default function Walker({
           keyHint="C"
           tone="captured"
           active={currentStatus === 'captured'}
-          onClick={() => dispatch({ type: 'classify', status: 'captured' })}
+          onClick={() => handleClassify('captured')}
+          disabled={pendingTextEntry !== null}
         />
         <ClassifyButton
           label="Missed"
           keyHint="M"
           tone="missed"
-          active={currentStatus === 'missed'}
-          onClick={() => dispatch({ type: 'classify', status: 'missed' })}
+          active={
+            currentStatus === 'missed' ||
+            (pendingTextEntry?.status === 'missed' && pendingTextEntry.claimId === current.id)
+          }
+          onClick={() => handleClassify('missed')}
+          disabled={pendingTextEntry !== null}
         />
         <ClassifyButton
           label="Hallucinated"
           keyHint="H"
           tone="hallucinated"
-          active={currentStatus === 'hallucinated'}
-          onClick={() => dispatch({ type: 'classify', status: 'hallucinated' })}
+          active={
+            currentStatus === 'hallucinated' ||
+            (pendingTextEntry?.status === 'hallucinated' &&
+              pendingTextEntry.claimId === current.id)
+          }
+          onClick={() => handleClassify('hallucinated')}
+          disabled={pendingTextEntry !== null}
         />
       </div>
+
+      {/* Optional correction textarea — appears only when M or H is pending */}
+      {pendingTextEntry && (
+        <div className="mt-3 rounded border border-border bg-background p-3">
+          <label className="block text-[10px] uppercase tracking-wide text-gray-500">
+            Optional correction · Enter to save, Esc to cancel
+          </label>
+          <textarea
+            ref={textareaRef}
+            value={pendingTextEntry.text}
+            onChange={(e) =>
+              setPendingTextEntry((prev) =>
+                prev ? { ...prev, text: e.target.value } : prev,
+              )
+            }
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const trimmed = pendingTextEntry.text.trim();
+                commitPendingTextEntry(trimmed.length > 0 ? trimmed : null);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelPendingTextEntry();
+              }
+            }}
+            onBlur={() => {
+              // Blur = Esc per spec: close textarea, write no row, do not
+              // advance, leave claim unclassified. Previously this called
+              // commitPendingTextEntry(null), which wrote a row with NULL
+              // correct_claim and advanced the walker — silently discarding
+              // any in-flight text the grader had typed when they switched
+              // windows or clicked outside. Cancel is the safe default; the
+              // grader re-presses M/H to retry.
+              cancelPendingTextEntry();
+            }}
+            placeholder='e.g. "TEX said 60%, actual is 75%". Enter to save, Esc to cancel.'
+            rows={2}
+            className="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-white placeholder:text-gray-600 focus:border-brand focus:outline-none"
+          />
+        </div>
+      )}
 
       {/* Button row 2 — utility */}
       <div className="mt-2 grid grid-cols-4 gap-2 text-xs">
@@ -300,23 +463,26 @@ export default function Walker({
           label="Skip"
           keyHint="S"
           active={currentStatus === 'skipped'}
-          onClick={() => dispatch({ type: 'classify', status: 'skipped' })}
+          onClick={() => handleClassify('skipped')}
+          disabled={pendingTextEntry !== null}
         />
         <UtilityButton
           label="Back"
           keyHint="←"
           onClick={() => dispatch({ type: 'back' })}
+          disabled={pendingTextEntry !== null}
         />
         <UtilityButton
           label="Forward"
           keyHint="→"
           onClick={() => dispatch({ type: 'forward' })}
+          disabled={pendingTextEntry !== null}
         />
         <UtilityButton
           label="Undo"
           keyHint="U"
           onClick={() => dispatch({ type: 'undo' })}
-          disabled={state.history.length === 0}
+          disabled={state.history.length === 0 || pendingTextEntry !== null}
         />
       </div>
 
@@ -324,6 +490,15 @@ export default function Walker({
       <p className="mt-3 text-[10px] text-gray-500">
         C captured · M missed · H hallucinated · S skip · ← back · → forward · U undo · Enter advance
       </p>
+
+      {/* Persistence status — only visible when something interesting has happened. */}
+      {(saveErrorCount > 0 || pendingRetryCount > 0) && (
+        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] text-red-300">
+          {saveErrorCount} save{saveErrorCount === 1 ? '' : 's'} failed
+          {pendingRetryCount > 0 ? ` · ${pendingRetryCount} pending retry` : ''} — session
+          continues, see summary on completion.
+        </p>
+      )}
 
       {/* Progress bar */}
       <div className="mt-3 h-0.5 w-full overflow-hidden rounded bg-border">
@@ -341,12 +516,14 @@ function ClassifyButton({
   keyHint,
   tone,
   active,
+  disabled,
   onClick,
 }: {
   label: string;
   keyHint: string;
   tone: 'captured' | 'missed' | 'hallucinated';
   active: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   const tones: Record<typeof tone, { base: string; active: string }> = {
@@ -368,7 +545,8 @@ function ClassifyButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center justify-center gap-2 rounded border px-3 py-2 text-sm font-semibold transition-colors ${cls}`}
+      disabled={disabled}
+      className={`flex items-center justify-center gap-2 rounded border px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${cls}`}
     >
       <span className="rounded bg-black/40 px-1.5 py-0.5 font-mono text-[10px]">
         {keyHint}
@@ -473,10 +651,16 @@ function SectionTransition({
 function SummaryScreen({
   claims,
   classifications,
+  savedCount,
+  saveErrorCount,
+  pendingRetryCount,
   onExit,
 }: {
   claims: Claim[];
   classifications: Classifications;
+  savedCount: number;
+  saveErrorCount: number;
+  pendingRetryCount: number;
   onExit: () => void;
 }) {
   const overall = tallyFor(claims, classifications);
@@ -525,8 +709,26 @@ function SummaryScreen({
         </ul>
       </div>
 
-      <p className="mt-5 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-        ⚠ Classifications held in memory only. Save wiring lands in R3+R10.
+      {/* R3+R10: save status. The memory-only warning is gone — classifications
+          persist as they happen. A red banner shows only if the network had
+          trouble; otherwise the green confirmation tells the grader the
+          session is durable. */}
+      <div className="mt-5 rounded border border-border bg-surface px-3 py-2 text-xs">
+        <p className="text-green-300">
+          {savedCount} correction{savedCount === 1 ? '' : 's'} written to DB.
+        </p>
+        {(saveErrorCount > 0 || pendingRetryCount > 0) && (
+          <p className="mt-1 text-red-300">
+            ⚠ {saveErrorCount} failed
+            {pendingRetryCount > 0 ? ` · ${pendingRetryCount} retained for retry` : ''}.
+            Check the browser console / network tab.
+          </p>
+        )}
+      </div>
+
+      <p className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+        EVAL_SCORES.md entry and disk snapshot will be written by R11 + R12. This session&apos;s
+        scores are not yet recorded permanently.
       </p>
 
       <button

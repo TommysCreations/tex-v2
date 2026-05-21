@@ -11,14 +11,72 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 of 9 done in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40) merged to `main`. R9 claim walker opened as PR #43 against `main` from `feature/grading-ui` — awaiting Tommy's browser smoke test (20-item checklist; admin auth-gated, can't be done from CI/agent). Next build item: R3+R10 (per-claim save wiring — extend `POST /admin/corrections` for `claim_status`, auto-populate report/film/section context from grading state). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
-**Blockers:** None on SDK timeout (**fixed**). **Operational note:** re-running extraction on old films expects **fresh Gemini uploads** — stale URIs alone will not work after expiry.
-**Last Updated:** May 20, 2026 — R9 claim walker PR #43 open; R7 #40 + R8 #39 + R13 #38 + R6 #37 merged earlier today.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40), R9 (PR #43) merged to `main`. **R3+R10 opened as PR #44 against `main` from `feature/grading-ui` — blur-cancel bug fix landed on top of original commits; Tommy to re-run the 16-item smoke test from scratch, then merge.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Blockers:** **Migration 018 must be applied to Neon dev before PR #44 testing** (`python scripts/migrate.py`). Until then, every walker write returns 500 — migration 017's `corrections_claim_text_present` CHECK rejects Missed rows with `ai_claim` populated.
+**Last Updated:** May 21, 2026 — R3+R10 PR #44 open; blur-cancel + Esc-cancel fix added on top of original two commits.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-21) — R3+R10 walker save wiring + correction text field; build item 6 of 9:**
+
+R3+R10 is the PR that makes the R9 walker useful. Before this, every grading session was throwaway — classifications lived in React state and died on reload. After this, each classification hits the `corrections` table immediately and training data accumulates from day one. Audit estimate was 3-4h.
+
+*Two pre-build decisions surfaced and resolved (CLAUDE.md decision protocol):*
+1. **Missed-semantics conflict with migration 017 — RESOLVED via Option 1 (relax constraint).** Migration 017's `corrections_claim_text_present` CHECK forced `claim_status='missed'` → `ai_claim NULL` + `correct_claim NOT NULL`. The v1 sentence-split walker can only let the grader press M while looking at a TEX sentence; that sentence belongs in `ai_claim` as the training-signal anchor. Migration 018 drops the 017 constraint and replaces it with the minimum guard `ai_claim OR correct_claim NOT NULL`. The structured-claims walker (v2) can re-tighten this later.
+2. **Category bucket for walker rows — RESOLVED via Option 2 (walker_v1 bucket).** `corrections.category` is an error-TYPE enum (`set_identification`, `frequency_count`, etc.). The walker has no UI to elicit error type per claim, so per-section default mapping (e.g. `offensive_sets → set_identification`) was rejected as fiction. Walker hardcodes `category: 'walker_v1'`; pattern analyzer's `by_category` view treats it as a separate bucket. Walker data is sliced by `claim_status × section_type × prompt_version` instead. Structured-claims v2 replaces this with LLM-emitted per-claim categories.
+
+*What landed (PR #44 on `feature/grading-ui`, commits `136827b` + `0eb78ac`):*
+- `backend/migrations/018_corrections_relax_missed_check.sql` — drops the 017 `corrections_claim_text_present` CHECK, replaces with minimum-signal guard. Also locks the `category` enum at the DB layer (mirroring 017's `claim_status` lock), adding `walker_v1` to that enum so the training-data moat stays intact for category just like it does for claim_status.
+- `backend/routers/admin.py` — `CorrectionCreate` Pydantic model now requires `claim_status: Literal["captured", "missed", "hallucinated"]`. `ai_claim` and `is_correct` made optional. `is_correct` derived from `claim_status` server-side if not provided; legacy callers that pass it inconsistently get a warning-log but the explicit value is honored. Validation: captured/hallucinated require `ai_claim`; captured rejects `correct_claim`; missed requires at least `ai_claim` or `correct_claim`. INSERT now includes `claim_status` (was missing — migration 017 added it as NOT NULL, every write would have 500'd until this PR). Response returns `id` + `created_at`. INFO log per write surfaces `claim_status`, `prompt_version`, `has_correction_text` for eval-loop observability. `VALID_CATEGORIES` extended with `walker_v1`.
+- `frontend/lib/api.ts` — new `createGradingCorrection` typed wrapper for walker payload. `createCorrection` (legacy form) now requires `claim_status` in its signature.
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — local `pendingTextEntry` state for the M/H textarea flow. C saves immediately + advances. M/H open inline correction textarea (auto-focused). Enter commits with text; Esc or blur commits with null; in both cases dispatch+save fires and cursor advances. The existing keyboard guard for INPUT/TEXTAREA focus already keeps C/M/H from classifying mid-typing; an extra `if (pendingTextEntry) return` gate blocks walker shortcuts whenever a textarea-pending entry is non-null so a blur can't leak a classification. Summary screen drops the memory-only warning; surfaces `savedCount`, `saveErrorCount`, `pendingRetryCount`. R11/R12 pending note is explicit.
+- `frontend/app/admin/grade/[report_id]/page.tsx` — owns persistence. Stable `onSaveClassification` callback uses a ref-held `getToken` so each save can fetch a fresh JWT without re-rendering the walker. Auto-populates `report_id` / `film_id` / `section_type` / `prompt_version` (per-section, not report-level — sections may run different prompt versions) / `ai_claim` (the TEX sentence) / `correct_claim` (the optional typed text) / `category: 'walker_v1'`. Fire-and-forget — never blocks the walker. Failures push the payload to `pendingRetries` and increment `saveErrorCount`. `canStartGrading` now also requires `filmId` to exist.
+- `frontend/app/admin/page.tsx` — legacy single-correction form sends `claim_status: 'hallucinated'` so it doesn't 400 under the new contract. Hardcoded per Tommy's call (the form is overwhelmingly used to file `is_correct=false` rows and is slated for deprecation; wiring a 3-way picker into deprecated UI is wasted work). Inline comment + PR note explain the v1 limitation.
+
+*Undo semantics — Path A (UI-local):* the corresponding DB row stays put when the grader presses U. If they re-classify, a NEW row is written. Latest-by-`created_at` per `(report_id, ai_claim, section_type)` is authoritative. This keeps corrections append-only (the training-data audit trail) and avoids needing a DELETE endpoint. Reducer comment documents the convention so future readers understand the "duplicate row, newest wins" semantics.
+
+*Engineering-side verification (clean):*
+- `npx tsc --noEmit` → no output.
+- `python3 -c "import ast; ast.parse(open('routers/admin.py').read())"` → syntax OK.
+
+*Pre-merge actions (Tommy):*
+1. **Apply migration 018 to Neon dev:** `python scripts/migrate.py` (needs `NEON_*` env vars in `backend/.env`). Until this lands, walker writes return 500 because migration 017's CHECK still rejects Missed rows with `ai_claim` populated.
+2. **Run the 16-item smoke test in PR #44 body.** Items 9 (failed save), 11 (Pattern Analyzer), 12 (legacy form still works) are the non-obvious ones; the rest exercise C/M/H/S/U flows and DB row shape.
+3. Merge PR #44.
+4. Then R11 (EVAL_SCORES.md auto-writer, 2-3h) and R12 (disk snapshot writer, 2h).
+
+*Scope kept tight (intentionally not touched):*
+- Pattern Analyzer SQL — works as-is. New rows have `claim_status` populated; the existing query reads `is_correct` which is derived correctly on the new path. `by_category` will show a `walker_v1` row — documented as a useful manual-vs-walker volume signal.
+- `is_correct` column removal — deprecated but retained. Post-launch migration drops it once all read paths move over.
+- Batch correction endpoint — per-claim writes are sufficient at audit-estimated session volume; no batching required.
+- DELETE endpoint for corrections — Path A undo means we don't need it. Append-only is healthier for training-data audit anyway.
+
+*Judgment calls — current count 0 surprise, 2 surfaced + resolved:*
+1. **Missed semantics** — surfaced because the R3+R10 brief expected ai_claim populated for missed, but migration 017's CHECK blocked it. Resolved via Tommy decision (migration 018 relax).
+2. **Category mapping** — surfaced because brief's `SECTION_TO_CATEGORY` mapping used section_type values that backend `VALID_CATEGORIES` would reject. Resolved via Tommy decision (walker_v1 bucket).
+
+*Git state:*
+- Commits on `feature/grading-ui` since R9 merge: `136827b` (backend), `0eb78ac` (frontend).
+- PR: https://github.com/aidn31/tex-v2/pull/44
+
+*Smoke-test follow-up (2026-05-21, later) — blur-cancel + Esc-cancel fix on PR #44:*
+
+The original R3+R10 design had Esc and blur both call `commitPendingTextEntry(null)` — save the row with `correct_claim=NULL` and advance. Tommy's smoke test caught the real-world failure mode: a grader presses M/H, starts typing a correction, switches tabs (or alt-tabs to check the report), and the blur fires. Their in-flight text is dropped on the floor and a phantom row with `correct_claim=NULL` is written instead. Silent data loss, exactly the thing R3+R10 exists to prevent.
+
+`GRADING_UI_AUDIT.md` and the PR body specified the correct contract: **Esc → cancel cleanly. Blur → same as Esc.** The original implementation got it wrong on both. Fix:
+
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — new `cancelPendingTextEntry()` helper that just clears `pendingTextEntry` without calling `onSaveClassification` and without dispatching `classify`. Esc and blur both call it. Enter unchanged (still save-and-advance). C/M/H/S buttons + keyboard shortcuts unchanged. Label updated from "Esc to skip" to "Esc to cancel" since the behavior actually is cancel now. Inline comment block updated to match.
+
+*Verification:* `npx tsc --noEmit` clean.
+
+*Why this counts as in-scope for PR #44 vs a follow-up PR:* PR #44 is unmerged, the bug exists in the same component, and the fix is ~10 lines tightly bounded to the blur/Esc handlers. Splitting it into a new PR would just be process for its own sake.
+
+*Smoke test:* Tommy reruns the 16-item list from scratch. The blur scenario specifically (alt-tab mid-typing or click outside the textarea) should now leave the claim unclassified with no DB write — re-pressing M or H reopens a fresh textarea.
+
+---
 
 **Session log (2026-05-20, night) — R9 claim-by-claim walker; build item 5 of 9:**
 
