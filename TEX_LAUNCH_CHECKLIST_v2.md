@@ -40,22 +40,6 @@ onboarded at $49.99/report (first report free).
 
 ---
 
-## 📋 GRADING UI BUILD ITEMS (per-R-task status)
-
-Per-task status with PR numbers. Daily plans below break this into hour-by-hour work; this section is the canonical "what's done / what's left" view for the 9 build items.
-
-- [x] **R6** — corrections schema migration (`claim_status` column, `ai_claim` nullable) — PR #37, merged 2026-05-20
-- [x] **R13** — admin report-content endpoint (`GET /admin/reports/{report_id}`) — PR #38, merged 2026-05-20
-- [x] **R8** — golden-set listing + ground-truth fetch endpoints — PR #39, merged 2026-05-20
-- [x] **R7** — side-by-side grading canvas at `/admin/grade/[report_id]` — PR #40, merged 2026-05-20
-- [x] **R9** — sentence-split claim walker (captured / missed / hallucinated buttons, keyboard shortcuts, claim N of M) — PR #43 (open 2026-05-20, awaiting Tommy's browser smoke test + merge)
-- [ ] **R3+R10** — per-claim save wiring (extend `POST /admin/corrections` for `claim_status`, auto-populate report/film/section context, relax "correct_claim required when incorrect" check)
-- [ ] **R11** — `EVAL_SCORES.md` auto-writer (markdown table + JSONL sidecar)
-- [ ] **R12** — disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json`
-- [ ] **Integration test pass** — end-to-end: pick generated report → load ground truth → walk 50+ claims → submit → verify N rows in corrections + 1 EVAL_SCORES row + 1 snapshot. Stopwatch ≤40 min/film.
-
----
-
 ## TODAY — Tuesday May 19 (complete)
 - [x] Identify which films are run at v1.6 (1 of 5: `e21a5d8a`)
 - [x] Decision: re-run all 5 for clean baseline (deferred to Fri before grading)
