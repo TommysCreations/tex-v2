@@ -11,14 +11,31 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40), R9 (PR #43) merged to `main`. **R3+R10 opened as PR #44 against `main` from `feature/grading-ui` — blur-cancel bug fix landed on top of original commits; Tommy to re-run the 16-item smoke test from scratch, then merge.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
-**Blockers:** **Migration 018 must be applied to Neon dev before PR #44 testing** (`python scripts/migrate.py`). Until then, every walker write returns 500 — migration 017's `corrections_claim_text_present` CHECK rejects Missed rows with `ai_claim` populated.
-**Last Updated:** May 21, 2026 — R3+R10 PR #44 open; blur-cancel + Esc-cancel fix added on top of original two commits.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 merged.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44) merged to `main`. **R9 walker visual-state polish opened as a follow-up PR on `feature/grading-ui` — neutral base / saturated active per tone, so a previously-classified claim is visually obvious when the grader navigates back. Tommy to smoke-test and merge.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Blockers:** None code-side for the walker. Phase 3.17 still waiting on grading-UI polish + R11/R12 before formal Stage 1 grading runs.
+**Last Updated:** May 21, 2026 — R9 visual-state follow-up PR opened on `feature/grading-ui` after #44 merge.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-21, after #44 merge) — R9 walker visual-state polish; follow-up PR on `feature/grading-ui`:**
+
+PR #44 merged R3+R10. Smoke-testing surfaced a UX gap on the R9 walker that needs fixing before grading volume starts: when a grader classified a claim and navigated back to it (Back, ←, J/K), the C/M/H buttons looked identical to a fresh unclassified claim. The grader couldn't spot-check their own work across 38 claims × 6 sections per game and would lose their place.
+
+*Root cause was visual, not state:* `Walker.tsx` already tracks classifications in `state.classifications` keyed by stable `claim.id` (`${section_type}-${index}` from `splitClaims`), the reducer's `classify` action writes to it, `undo` removes the entry, and `ClassifyButton` already receives an `active` prop. The data was there. The problem was that the *base* (unselected) state was already colored — `border-green-500/40 text-green-300` etc. — and the *active* state only added a 20%-opacity background tint over `#0a0a0a`. Active and base were nearly indistinguishable to the eye.
+
+*Fix (one file, tones-only):*
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — `ClassifyButton` tones rewritten. Base state is now neutral: `border-border text-gray-300` with a tone-colored hover preview. Active state is saturated and ringed: `bg-green-600 / amber-500 / red-600` background, white-or-black text for contrast, `ring-2 ring-{tone}-400/70` for an unambiguous "this is the selected classification" cue. Semantically green = captured, amber = missed, red = hallucinated, preserved per the existing UI contract.
+
+*Out of scope (intentionally untouched):* save path, DB queries, keyboard shortcuts, navigation, textarea/blur-cancel logic from PR #44, summary screen, Pattern Analyzer, backend. Session-local only, no persistence across reloads (acceptable for v1).
+
+*Engineering-side verification:* `npx tsc --noEmit` in `frontend/` → no output (clean).
+
+*What Tommy does next:* smoke-test on `http://localhost:3000/admin/grade/[report_id]` — classify a few claims, hit ← or J to navigate back, confirm the previously-selected button is visibly highlighted in its tone color with a ring. Press U to undo and confirm the highlight clears. Then merge.
+
+---
 
 **Session log (2026-05-21) — R3+R10 walker save wiring + correction text field; build item 6 of 9:**
 
