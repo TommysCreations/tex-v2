@@ -356,17 +356,55 @@ export function createCorrection(
     section_type: string;
     ai_claim: string;
     is_correct: boolean;
+    claim_status: 'captured' | 'missed' | 'hallucinated';
     correct_claim?: string;
     category: string;
     confidence?: string;
     prompt_version: string;
     admin_notes?: string;
   },
-): Promise<{ id: string }> {
+): Promise<{ id: string; created_at: string }> {
   return apiFetch('/admin/corrections', {
     method: 'POST',
     token,
     body: JSON.stringify(data),
+  });
+}
+
+// R3+R10: walker writes go through this typed wrapper. Same endpoint as
+// createCorrection, but the contract is built for walker context — claim_status
+// is required, ai_claim is null only for Missed (when the grader has no TEX
+// sentence to anchor against), correct_claim is genuinely optional. Walker
+// rows are categorized as 'walker_v1' so the pattern analyzer can segregate
+// them from manually-categorized rows from the legacy single-correction form.
+export type WalkerClaimStatus = 'captured' | 'missed' | 'hallucinated';
+
+export interface GradingCorrectionInput {
+  report_id: string;
+  film_id: string;
+  section_type: string;
+  claim_status: WalkerClaimStatus;
+  ai_claim: string | null;
+  correct_claim: string | null;
+  category: string;
+  prompt_version: string;
+  phase?: number;
+  game_count?: number | null;
+}
+
+export interface GradingCorrectionResult {
+  id: string;
+  created_at: string;
+}
+
+export function createGradingCorrection(
+  token: string,
+  input: GradingCorrectionInput,
+): Promise<GradingCorrectionResult> {
+  return apiFetch('/admin/corrections', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(input),
   });
 }
 

@@ -80,8 +80,15 @@ export default function AdminCorrectionsPage() {
     try {
       const token = await getToken();
       if (!token) return;
+      // R3+R10: backend now requires claim_status. Per Tommy's call,
+      // hardcode 'hallucinated' at this one call site — the legacy form is
+      // overwhelmingly used to file is_correct=false rows, and it's slated
+      // for deprecation by the walker UI. If is_correct=true is selected
+      // here, the row writes as hallucinated; that's an accepted v1
+      // limitation rather than wiring a 3-way picker into deprecated UI.
       await createCorrection(token, {
         ...formData,
+        claim_status: 'hallucinated',
         correct_claim: formData.is_correct ? undefined : formData.correct_claim,
         admin_notes: formData.admin_notes || undefined,
       });

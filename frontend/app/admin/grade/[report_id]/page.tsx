@@ -2,19 +2,22 @@
 
 import { useAuth } from '@clerk/nextjs';
 import { useParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   AdminReportDetail,
   AdminReportSection,
   GoldenFilm,
+  GradingCorrectionInput,
   GroundTruthDocument,
+  createGradingCorrection,
   getAdminReportDetail,
   getGoldenTruth,
   listGoldenFilms,
 } from '@/lib/api';
 import { SECTION_LABELS, sectionOrderIndex } from '@/lib/grading/sections';
+import { Claim } from '@/lib/grading/splitClaims';
 import Walker, { buildSortedClaims, useWalkerReducer } from './Walker';
 
 type Mode = 'preview' | 'walker';
@@ -141,7 +144,90 @@ export default function GradeReportPage() {
   const claims = useMemo(() => buildSortedClaims(sortedSections), [sortedSections]);
   const [walkerState, walkerDispatch] = useWalkerReducer(claims);
 
-  const canStartGrading = !!report && claims.length > 0;
+  // R3+R10: persistence counters. savedCount increments on a successful POST;
+  // saveErrorCount on any failure; pendingRetries accumulates failed payloads
+  // for the summary screen so a flaky network doesn't quietly lose work.
+  // A pendingRetries-driven background retry loop is out of scope; the
+  // grader sees the count and can re-run the session if needed.
+  const [savedCount, setSavedCount] = useState(0);
+  const [saveErrorCount, setSaveErrorCount] = useState(0);
+  const [pendingRetries, setPendingRetries] = useState<GradingCorrectionInput[]>([]);
+
+  // Per-section prompt_version lookup. The walker writes the section's own
+  // version, not the report's top-level version, because sections can run
+  // different prompt versions in the same report.
+  const promptVersionBySection = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of sortedSections) {
+      map[s.section_type] = s.prompt_version;
+    }
+    return map;
+  }, [sortedSections]);
+
+  // Single film_id for the report — current data model assumes one film
+  // per report (report_films may carry more, but the walker context wants
+  // a single anchor for now). If multi-film reports become real, this
+  // becomes the first film and a TODO surfaces.
+  const filmId = report?.films[0]?.film_id ?? null;
+
+  // Hold the token in a ref so onSaveClassification can be a stable callback
+  // without forcing the parent to re-render every keystroke. We refresh the
+  // token lazily inside the save path.
+  const getTokenRef = useRef(getToken);
+  useEffect(() => {
+    getTokenRef.current = getToken;
+  }, [getToken]);
+
+  const onSaveClassification = useCallback(
+    (claim: Claim, status: 'captured' | 'missed' | 'hallucinated', correctText: string | null) => {
+      if (!report || !filmId) {
+        // Without report/film context there's nothing to anchor a row to.
+        // Increment failure count so the summary surface reflects the gap.
+        setSaveErrorCount((n) => n + 1);
+        return;
+      }
+      const promptVersion =
+        promptVersionBySection[claim.section_type] ?? report.report_prompt_version;
+      const payload: GradingCorrectionInput = {
+        report_id: report.report_id,
+        film_id: filmId,
+        section_type: claim.section_type,
+        claim_status: status,
+        ai_claim: claim.text,
+        correct_claim: correctText,
+        // Walker rows are intentionally bucketed as 'walker_v1' — see
+        // backend VALID_CATEGORIES comment. Pattern analyzer slices walker
+        // data by claim_status × section_type × prompt_version, not category.
+        category: 'walker_v1',
+        prompt_version: promptVersion,
+      };
+
+      // Fire-and-forget. We snapshot the token outside the await so the
+      // walker can keep moving while this resolves.
+      (async () => {
+        try {
+          const token = await getTokenRef.current();
+          if (!token) {
+            setSaveErrorCount((n) => n + 1);
+            setPendingRetries((prev) => [...prev, payload]);
+            return;
+          }
+          await createGradingCorrection(token, payload);
+          setSavedCount((n) => n + 1);
+        } catch (err) {
+          // Per spec: never block the walker. Surface count, retain for
+          // retry, log to console so DevTools network-tab debugging works.
+          // eslint-disable-next-line no-console
+          console.error('createGradingCorrection failed', err, payload);
+          setSaveErrorCount((n) => n + 1);
+          setPendingRetries((prev) => [...prev, payload]);
+        }
+      })();
+    },
+    [report, filmId, promptVersionBySection],
+  );
+
+  const canStartGrading = !!report && !!filmId && claims.length > 0;
 
   return (
     <div className="-mx-6 -mt-6">
@@ -275,6 +361,10 @@ export default function GradeReportPage() {
               state={walkerState}
               dispatch={walkerDispatch}
               onExit={() => setMode('preview')}
+              onSaveClassification={onSaveClassification}
+              savedCount={savedCount}
+              saveErrorCount={saveErrorCount}
+              pendingRetryCount={pendingRetries.length}
             />
           )}
         </div>
