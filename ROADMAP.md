@@ -11,9 +11,9 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40), R9 (PR #43) merged to `main`. **R3+R10 opened as PR #44 against `main` from `feature/grading-ui` — awaiting migration 018 apply on Neon dev + Tommy's 16-item browser smoke test.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 of 9 in PR.** R6 (PR #37), R13 (PR #38), R8 (PR #39), R7 (PR #40), R9 (PR #43) merged to `main`. **R3+R10 opened as PR #44 against `main` from `feature/grading-ui` — blur-cancel bug fix landed on top of original commits; Tommy to re-run the 16-item smoke test from scratch, then merge.** Next build items: R11 (EVAL_SCORES.md auto-writer) and R12 (disk snapshot writer). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
 **Blockers:** **Migration 018 must be applied to Neon dev before PR #44 testing** (`python scripts/migrate.py`). Until then, every walker write returns 500 — migration 017's `corrections_claim_text_present` CHECK rejects Missed rows with `ai_claim` populated.
-**Last Updated:** May 21, 2026 — R3+R10 PR #44 open; R9 PR #43 merged earlier.
+**Last Updated:** May 21, 2026 — R3+R10 PR #44 open; blur-cancel + Esc-cancel fix added on top of original two commits.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
@@ -61,6 +61,20 @@ R3+R10 is the PR that makes the R9 walker useful. Before this, every grading ses
 *Git state:*
 - Commits on `feature/grading-ui` since R9 merge: `136827b` (backend), `0eb78ac` (frontend).
 - PR: https://github.com/aidn31/tex-v2/pull/44
+
+*Smoke-test follow-up (2026-05-21, later) — blur-cancel + Esc-cancel fix on PR #44:*
+
+The original R3+R10 design had Esc and blur both call `commitPendingTextEntry(null)` — save the row with `correct_claim=NULL` and advance. Tommy's smoke test caught the real-world failure mode: a grader presses M/H, starts typing a correction, switches tabs (or alt-tabs to check the report), and the blur fires. Their in-flight text is dropped on the floor and a phantom row with `correct_claim=NULL` is written instead. Silent data loss, exactly the thing R3+R10 exists to prevent.
+
+`GRADING_UI_AUDIT.md` and the PR body specified the correct contract: **Esc → cancel cleanly. Blur → same as Esc.** The original implementation got it wrong on both. Fix:
+
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — new `cancelPendingTextEntry()` helper that just clears `pendingTextEntry` without calling `onSaveClassification` and without dispatching `classify`. Esc and blur both call it. Enter unchanged (still save-and-advance). C/M/H/S buttons + keyboard shortcuts unchanged. Label updated from "Esc to skip" to "Esc to cancel" since the behavior actually is cancel now. Inline comment block updated to match.
+
+*Verification:* `npx tsc --noEmit` clean.
+
+*Why this counts as in-scope for PR #44 vs a follow-up PR:* PR #44 is unmerged, the bug exists in the same component, and the fix is ~10 lines tightly bounded to the blur/Esc handlers. Splitting it into a new PR would just be process for its own sake.
+
+*Smoke test:* Tommy reruns the 16-item list from scratch. The blur scenario specifically (alt-tab mid-typing or click outside the textarea) should now leave the claim unclassified with no DB write — re-pressing M or H reopens a fresh textarea.
 
 ---
 

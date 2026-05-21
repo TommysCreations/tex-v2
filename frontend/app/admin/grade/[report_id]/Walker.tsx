@@ -172,10 +172,13 @@ export default function Walker({
   const transitionPending = state.sectionTransitionPending;
 
   // R3+R10: text-entry mode. When the grader presses M or H, we open a
-  // textarea instead of advancing immediately. Enter commits with text, Esc
-  // or blur commits with null. C bypasses this entirely (no correction text
-  // makes sense for a captured claim). State is local to the Walker because
-  // it only exists during the brief in-claim text-entry interaction.
+  // textarea instead of advancing immediately. Enter commits with text. Esc
+  // or blur cancel cleanly — no row written, no advance, claim stays
+  // unclassified — so an in-flight correction never gets silently dropped
+  // when the grader tabs away mid-typing. C bypasses this entirely (no
+  // correction text makes sense for a captured claim). State is local to
+  // the Walker because it only exists during the brief in-claim text-entry
+  // interaction.
   const [pendingTextEntry, setPendingTextEntry] = useState<{
     claimId: string;
     status: 'missed' | 'hallucinated';
@@ -219,6 +222,14 @@ export default function Walker({
     }
     onSaveClassification(claim, pendingTextEntry.status, text);
     dispatch({ type: 'classify', status: pendingTextEntry.status });
+    setPendingTextEntry(null);
+  }
+
+  // Close the textarea without writing a row or advancing. Used by Esc and
+  // blur so the claim stays unclassified and the grader can retry M/H or
+  // pick a different status. Prevents silent data loss when focus leaves
+  // mid-typing.
+  function cancelPendingTextEntry() {
     setPendingTextEntry(null);
   }
 
@@ -409,7 +420,7 @@ export default function Walker({
       {pendingTextEntry && (
         <div className="mt-3 rounded border border-border bg-background p-3">
           <label className="block text-[10px] uppercase tracking-wide text-gray-500">
-            Optional correction · Enter to save, Esc to skip
+            Optional correction · Enter to save, Esc to cancel
           </label>
           <textarea
             ref={textareaRef}
@@ -426,17 +437,20 @@ export default function Walker({
                 commitPendingTextEntry(trimmed.length > 0 ? trimmed : null);
               } else if (e.key === 'Escape') {
                 e.preventDefault();
-                commitPendingTextEntry(null);
+                cancelPendingTextEntry();
               }
             }}
             onBlur={() => {
-              // Click-outside = Esc. Spec: "Clicking outside the textarea
-              // or pressing C: same as Esc." We honor blur; C-while-focused
-              // is handled by the textarea (it types 'c') and isn't a
-              // walker action.
-              commitPendingTextEntry(null);
+              // Blur = Esc per spec: close textarea, write no row, do not
+              // advance, leave claim unclassified. Previously this called
+              // commitPendingTextEntry(null), which wrote a row with NULL
+              // correct_claim and advanced the walker — silently discarding
+              // any in-flight text the grader had typed when they switched
+              // windows or clicked outside. Cancel is the safe default; the
+              // grader re-presses M/H to retry.
+              cancelPendingTextEntry();
             }}
-            placeholder='e.g. "TEX said 60%, actual is 75%". Enter to save, Esc to skip.'
+            placeholder='e.g. "TEX said 60%, actual is 75%". Enter to save, Esc to cancel.'
             rows={2}
             className="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm text-white placeholder:text-gray-600 focus:border-brand focus:outline-none"
           />
