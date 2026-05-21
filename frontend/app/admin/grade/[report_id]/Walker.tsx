@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { AdminReportSection } from '@/lib/api';
+import { AdminReportSection, GradingSessionRollup } from '@/lib/api';
 import { SECTION_ORDER, sectionLabel, sectionOrderIndex } from '@/lib/grading/sections';
 import { Claim, splitClaims } from '@/lib/grading/splitClaims';
 
@@ -156,6 +156,7 @@ export default function Walker({
   dispatch,
   onExit,
   onSaveClassification,
+  onCompleteSession,
   saveErrorCount,
   pendingRetryCount,
   savedCount,
@@ -165,6 +166,7 @@ export default function Walker({
   dispatch: Dispatch<WalkerAction>;
   onExit: () => void;
   onSaveClassification: SaveClassificationFn;
+  onCompleteSession: () => Promise<GradingSessionRollup>;
   saveErrorCount: number;
   pendingRetryCount: number;
   savedCount: number;
@@ -333,6 +335,7 @@ export default function Walker({
         savedCount={savedCount}
         saveErrorCount={saveErrorCount}
         pendingRetryCount={pendingRetryCount}
+        onCompleteSession={onCompleteSession}
         onExit={onExit}
       />
     );
@@ -658,6 +661,7 @@ function SummaryScreen({
   savedCount,
   saveErrorCount,
   pendingRetryCount,
+  onCompleteSession,
   onExit,
 }: {
   claims: Claim[];
@@ -665,6 +669,7 @@ function SummaryScreen({
   savedCount: number;
   saveErrorCount: number;
   pendingRetryCount: number;
+  onCompleteSession: () => Promise<GradingSessionRollup>;
   onExit: () => void;
 }) {
   const overall = tallyFor(claims, classifications);
@@ -677,6 +682,34 @@ function SummaryScreen({
     const counts = tallyFor(sectionClaims, classifications);
     return { section_type: s, total: sectionClaims.length, counts };
   }).filter((s): s is NonNullable<typeof s> => s !== null);
+
+  // R11: fire the EVAL_SCORES write once when the summary screen mounts.
+  // Strict-mode safe via a ref guard — the second effect call in dev is a
+  // no-op so we never double-log a session. Status drives the inline
+  // confirmation banner below.
+  const [evalStatus, setEvalStatus] = useState<
+    | { kind: 'pending' }
+    | { kind: 'ok'; rollup: GradingSessionRollup }
+    | { kind: 'error'; message: string }
+  >({ kind: 'pending' });
+  const evalFiredRef = useRef(false);
+  useEffect(() => {
+    if (evalFiredRef.current) return;
+    evalFiredRef.current = true;
+    (async () => {
+      try {
+        const rollup = await onCompleteSession();
+        setEvalStatus({ kind: 'ok', rollup });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('completeGradingSession failed', err);
+        setEvalStatus({
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'unknown error',
+        });
+      }
+    })();
+  }, [onCompleteSession]);
 
   return (
     <div className="rounded-lg border border-border bg-background p-6 text-sm text-gray-200">
@@ -730,9 +763,27 @@ function SummaryScreen({
         )}
       </div>
 
-      <p className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-        EVAL_SCORES.md entry and disk snapshot will be written by R11 + R12. This session&apos;s
-        scores are not yet recorded permanently.
+      {/* R11: EVAL_SCORES ledger status — writes one row to
+          EVAL_SCORES.md + one line to EVAL_SCORES.jsonl at the repo root.
+          R12 (disk snapshot of the full graded report) is the next PR. */}
+      {evalStatus.kind === 'pending' && (
+        <p className="mt-3 rounded border border-border bg-surface px-3 py-2 text-xs text-gray-300">
+          Writing EVAL_SCORES.md…
+        </p>
+      )}
+      {evalStatus.kind === 'ok' && (
+        <p className="mt-3 rounded border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs text-green-200">
+          ✅ EVAL_SCORES.md updated · session logged ({evalStatus.rollup.total_claims} claims,
+          prompt {evalStatus.rollup.prompt_version}).
+        </p>
+      )}
+      {evalStatus.kind === 'error' && (
+        <p className="mt-3 rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          ⚠ EVAL_SCORES.md write failed — see network tab. ({evalStatus.message})
+        </p>
+      )}
+      <p className="mt-2 text-[10px] text-gray-500">
+        Disk snapshot of the full graded report (R12) is the next PR.
       </p>
 
       <button

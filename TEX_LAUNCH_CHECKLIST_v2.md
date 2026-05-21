@@ -70,7 +70,7 @@ onboarded at $49.99/report (first report free).
 - [ ] Commit + PR
 
 ### Friday May 22 (evening, ~4-5 hrs) — Outputs
-- [ ] **R11:** EVAL_SCORES.md auto-writer (markdown + JSONL sidecar) (2-3h)
+- [x] **R11:** EVAL_SCORES.md auto-writer (markdown + JSONL sidecar) (2-3h) — **PR open on `feature/grading-ui`, awaiting Tommy smoke test**
 - [ ] **R12:** Disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json` (2h)
 - [ ] Trigger pipeline re-runs on remaining 4 golden films at v1.6 (Fri night so Sat is clean)
 - [ ] Commit + PR

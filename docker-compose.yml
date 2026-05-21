@@ -7,6 +7,11 @@ services:
     volumes:
       - "./backend:/app"
       - "./golden_set:/golden_set:ro"
+      # R11: EVAL_SCORES.md + EVAL_SCORES.jsonl are written at the repo root
+      # from POST /admin/grading-sessions/complete. The repo root is mounted
+      # rw so the eval ledger lands on the host filesystem ready to git-add.
+      # Dev-only — production never grades.
+      - "./:/repo:rw"
     depends_on: [redis]
 
   worker:

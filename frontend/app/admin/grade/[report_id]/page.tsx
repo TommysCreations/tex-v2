@@ -10,7 +10,9 @@ import {
   AdminReportSection,
   GoldenFilm,
   GradingCorrectionInput,
+  GradingSessionRollup,
   GroundTruthDocument,
+  completeGradingSession,
   createGradingCorrection,
   getAdminReportDetail,
   getGoldenTruth,
@@ -227,6 +229,31 @@ export default function GradeReportPage() {
     [report, filmId, promptVersionBySection],
   );
 
+  // R11: lock the session start time the first time the grader enters
+  // walker mode. The summary screen passes this as the lower bound when
+  // rolling up walker_v1 corrections rows so re-grades against the same
+  // report each get their own EVAL_SCORES row. Captured in a ref so it
+  // never moves once set; reset on full page reload (acceptable for v1).
+  const sessionStartedAtRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (mode === 'walker' && sessionStartedAtRef.current === null) {
+      sessionStartedAtRef.current = new Date().toISOString();
+    }
+  }, [mode]);
+
+  const onCompleteSession = useCallback(async (): Promise<GradingSessionRollup> => {
+    if (!report) throw new Error('Report not loaded');
+    const sessionStartedAt = sessionStartedAtRef.current;
+    if (!sessionStartedAt) throw new Error('Session start time not set');
+    const token = await getTokenRef.current();
+    if (!token) throw new Error('Not authenticated');
+    return completeGradingSession(token, {
+      report_id: report.report_id,
+      prompt_version: report.report_prompt_version,
+      session_started_at: sessionStartedAt,
+    });
+  }, [report]);
+
   const canStartGrading = !!report && !!filmId && claims.length > 0;
 
   return (
@@ -362,6 +389,7 @@ export default function GradeReportPage() {
               dispatch={walkerDispatch}
               onExit={() => setMode('preview')}
               onSaveClassification={onSaveClassification}
+              onCompleteSession={onCompleteSession}
               savedCount={savedCount}
               saveErrorCount={saveErrorCount}
               pendingRetryCount={pendingRetries.length}
