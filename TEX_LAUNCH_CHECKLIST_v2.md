@@ -66,14 +66,14 @@ onboarded at $49.99/report (first report free).
 - [ ] **R7:** Side-by-side layout at `/admin/grade/[report_id]` — two-pane, markdown-rendered (4-6h)
 - [x] **R9:** Sentence-split claim walker with [Captured][Missed][Hallucinated] buttons + keyboard shortcuts (4h) — **PR #43 merged**
 - [x] **R3+R10:** Per-claim save wiring — extend POST `/admin/corrections` for `claim_status`, auto-populate context (3-4h) — **PR #44 merged**
-- [ ] **R9 visual-state polish:** highlight previously-selected classification on back-navigation (neutral base / saturated active per tone) — follow-up PR on `feature/grading-ui`, awaiting Tommy smoke test
-- [ ] Commit + PR
+- [x] **R9 visual-state polish:** highlight previously-selected classification on back-navigation (neutral base / saturated active per tone) — **PR #45 merged**
+- [x] Commit + PR
 
 ### Friday May 22 (evening, ~4-5 hrs) — Outputs
 - [x] **R11:** EVAL_SCORES.md auto-writer (markdown + JSONL sidecar) (2-3h) — **PR #46 merged**
-- [x] **R12:** Disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json` (2h) — **PR open on `feature/grading-ui`, awaiting Tommy smoke test. With R12 merged, the grading UI build is COMPLETE.**
+- [x] **R12:** Disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json` (2h) — **PR #47 merged. Grading UI build is COMPLETE.**
 - [ ] Trigger pipeline re-runs on remaining 4 golden films at v1.6 (Fri night so Sat is clean)
-- [ ] Commit + PR
+- [x] Commit + PR
 
 ### Saturday May 23 (full day) — Integration + first grade
 - [ ] **Integration test** — grade film 01 at v1.6 through the UI end-to-end (4-6h)
