@@ -57,13 +57,13 @@ onboarded at $49.99/report (first report free).
 ## WEEK 1 — May 20-25: Grading UI build + grade 5 films at v1.6
 
 ### Wednesday May 20 (full day, ~8-10 hrs) — Foundation
-- [ ] **R6:** Schema migration — add `claim_status` column, `ai_claim` nullable (1-2h)
-- [ ] **R13:** New admin endpoint — GET `/admin/reports/{report_id}` returns full report content (3h)
-- [ ] **R8:** Ground-truth loader — backend reads `golden_set/{slug}/ground_truth.md`, frontend dropdown (3-5h)
-- [ ] Commit + PR
+- [x] **R6:** Schema migration — add `claim_status` column, `ai_claim` nullable (1-2h)
+- [x] **R13:** New admin endpoint — GET `/admin/reports/{report_id}` returns full report content (3h)
+- [x] **R8:** Ground-truth loader — backend reads `golden_set/{slug}/ground_truth.md`, frontend dropdown (3-5h)
+- [x] Commit + PR
 
 ### Thursday May 21 (full day, ~11-14 hrs) — Build the grading experience
-- [ ] **R7:** Side-by-side layout at `/admin/grade/[report_id]` — two-pane, markdown-rendered (4-6h)
+- [x] **R7:** Side-by-side layout at `/admin/grade/[report_id]` — two-pane, markdown-rendered (4-6h)
 - [x] **R9:** Sentence-split claim walker with [Captured][Missed][Hallucinated] buttons + keyboard shortcuts (4h) — **PR #43 merged**
 - [x] **R3+R10:** Per-claim save wiring — extend POST `/admin/corrections` for `claim_status`, auto-populate context (3-4h) — **PR #44 merged**
 - [x] **R9 visual-state polish:** highlight previously-selected classification on back-navigation (neutral base / saturated active per tone) — **PR #45 merged**
