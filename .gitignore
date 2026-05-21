@@ -65,3 +65,8 @@ htmlcov/
 tmp_*.txt
 tmp_*.md
 backend/tmp_*.txt
+
+# R12: per-session JSON flight-recorder snapshots from the grading UI.
+# EVAL_SCORES.md / EVAL_SCORES.jsonl stay tracked — the snapshots are bulky
+# (full report content + every classification) and grow unbounded.
+eval_snapshots/

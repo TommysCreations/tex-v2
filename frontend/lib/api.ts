@@ -418,6 +418,9 @@ export interface GradingSessionCompleteInput {
   prompt_version: string;
   session_started_at: string;
   notes?: string;
+  // R12: optional golden-film slug the grader selected. Backend uses it to
+  // populate ground_truth_ref in the snapshot JSON.
+  film_slug?: string;
 }
 
 export interface GradingSessionRollup {
@@ -433,6 +436,12 @@ export interface GradingSessionRollup {
   missed_pct: number;
   hallucinated_pct: number;
   notes: string;
+  // R12: snapshot_path is the relative path of the per-session JSON file
+  // (e.g. "eval_snapshots/<film>_<ver>_<ts>.json"). null + snapshot_error
+  // set when the snapshot write failed but the EVAL_SCORES writes
+  // succeeded (partial-success state).
+  snapshot_path?: string | null;
+  snapshot_error?: string | null;
 }
 
 export function completeGradingSession(

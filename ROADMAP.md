@@ -11,14 +11,50 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
-**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 + R9-visual merged.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44), R9 visual polish (#45) merged to `main`. **R11 (EVAL_SCORES.md + JSONL auto-writer) opened as a follow-up PR on `feature/grading-ui`. Backend appends one row to `EVAL_SCORES.md` and one line to `EVAL_SCORES.jsonl` at the repo root when the walker reaches the session-complete summary; rollup keyed by (report_id, prompt_version, walker_v1, created_at >= session_started_at). Repo root mounted rw at `/repo` in the API container via `docker-compose.yml`. Tommy to smoke-test and merge.** Next build item: R12 (disk snapshot of the full graded report). Stage 1 text gate + Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) remains queued behind the grading-UI build per the 2026-05-19 launch-checklist plan.
-**Blockers:** None code-side. Phase 3.17 still waiting on R12 (disk snapshot) and the integration test pass before formal Stage 1 grading runs.
-**Last Updated:** May 21, 2026 — R11 EVAL_SCORES auto-writer PR opened on `feature/grading-ui` after #45 merge.
+**Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 + R9-visual + R11 + R12 all in.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44), R9 visual polish (#45), R11 EVAL_SCORES auto-writer (#46) merged to `main`. **R12 (eval_snapshots/ JSON flight-recorder) opened as a follow-up PR on `feature/grading-ui`. Same `POST /admin/grading-sessions/complete` handler now writes a third artifact per session: a pretty-printed JSON snapshot at `eval_snapshots/{film_id}_{prompt_version}_{ISO8601_compact}.json` containing the full TEX report content, the ground-truth ref, every per-claim verdict, and the rollup. `eval_snapshots/` is gitignored — files are forensic, not checked in. Tommy to smoke-test and merge.** With R12 merged the grading UI build is COMPLETE; next workstream is Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) per the 2026-05-19 launch-checklist plan.
+**Blockers:** None code-side. Phase 3.17 (Film 04 synthesis smell-test → generate_report smoke → PDF sniff test) and the formal Stage 1 grading runs are now the next workstreams, no longer blocked by grading-UI build.
+**Last Updated:** May 21, 2026 — R12 eval_snapshots JSON writer PR opened on `feature/grading-ui` after #46 merge.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-21, after #46 merge) — R12 eval_snapshots/ JSON flight-recorder; build item 8 of 9 (grading UI build COMPLETE):**
+
+R12 closes the grading UI build. R11 wrote a one-line *summary* of each session to `EVAL_SCORES.md` / `.jsonl`; R12 writes the *full corpus* — every TEX section the grader read, every classification they made, and the ground-truth ref they graded against — to one JSON file per session. The pair is the flight recorder: longitudinal trend + per-session forensic record. Useful for (a) reproducibility ("what did TEX say back then?"), (b) audit ("why did this session score the way it did?"), and (c) raw training data for future fine-tuning.
+
+*What landed (single commit on `feature/grading-ui`):*
+- `backend/routers/admin.py` — `POST /admin/grading-sessions/complete` extended (not refactored). New constants `EVAL_SNAPSHOTS_DIR = EVAL_SCORES_ROOT / "eval_snapshots"` and `SNAPSHOT_SCHEMA_VERSION = "1"`. `GradingSessionComplete` body gains optional `film_slug: str | None`. After the existing EVAL_SCORES writes the handler runs two additional queries on the open connection — `SELECT section_type, content FROM report_sections WHERE report_id=%s` for the six-section corpus, and a re-query of corrections (same walker_v1 / created_at filter as the rollup) ordered by `created_at ASC` for the classification list. Snapshot payload: `snapshot_version` ("1"), `report_id`, `film_id`, `prompt_version`, `graded_at` (UTC ISO8601), `session_started_at` (UTC ISO8601), `notes`, `rollup` (same numbers R11 wrote to JSONL), `report_content` (dict keyed by section_type), `ground_truth_ref` (`golden_set/{slug}/ground_truth.md` if `film_slug` passes `GOLDEN_SLUG_PATTERN`, else `null` — "better null than wrong" per spec), `classifications` (list of `{section_type, claim_status, ai_claim, correct_claim, created_at}` rows). Filename: `{film_id}_{prompt_version}_{ISO8601_compact}.json` — `now.strftime("%Y-%m-%dT%H-%M-%SZ")` so the colons that PowerShell / NTFS hate are already hyphens. `prompt_version` is also regex-scrubbed of unsafe chars before going in the filename. `film_id` falls back to `"unknown"` for the zero-classification edge case. Written via `json.dumps(..., indent=2, ensure_ascii=False)` so a human can read it.
+- *Error handling:* the snapshot write is in its own `try/except OSError` block that *does not raise* — R11's existing 500-on-EVAL_SCORES-failure behavior is preserved exactly, but a snapshot-only failure surfaces as `snapshot_path=null` + `snapshot_error="…"` in the 200 response. The corrections rows are already in the DB and the EVAL_SCORES writes already landed, so the snapshot is the only artifact at risk and shouldn't take the response with it.
+- `frontend/lib/api.ts` — `GradingSessionCompleteInput` gains optional `film_slug`; `GradingSessionRollup` gains optional `snapshot_path` / `snapshot_error`.
+- `frontend/app/admin/grade/[report_id]/page.tsx` — `onCompleteSession` callback now passes `film_slug: selectedSlug || undefined`; dependency array adds `selectedSlug` so the callback re-binds when the grader switches golden films.
+- `frontend/app/admin/grade/[report_id]/Walker.tsx` — SummaryScreen banner now has three success states:
+  - both ledger + snapshot OK: `✅ EVAL_SCORES.md + snapshot written · session logged (N claims, prompt vX). <filename>` (green)
+  - ledger OK, snapshot failed: same line + inline amber warning `⚠ Snapshot write failed but session was logged — see network tab.` (amber)
+  - ledger failed: red banner unchanged from R11.
+  Filename is shown inline (last segment only, not full path) so Tommy can grep it without opening the network tab.
+- `.gitignore` — `eval_snapshots/` ignored. EVAL_SCORES.md / EVAL_SCORES.jsonl stay tracked (small text rollup); per-session snapshots are bulky JSON (full report content + every classification) and grow unbounded over time.
+
+*What is intentionally NOT in this PR (preserved per the brief's DO NOT list):*
+- corrections table schema, walker classification flow, keyboard shortcuts, undo, save wiring, R9 visual state, EVAL_SCORES.md / .jsonl formats, docker-compose mount setup, session_started_at semantics, R11's writer code. All extended, none rewritten.
+
+*Engineering-side verification (clean):*
+- `npx tsc --noEmit` in `frontend/` → no output.
+- `python3 -c "import ast; ast.parse(open('backend/routers/admin.py').read())"` → syntax OK.
+
+*What Tommy does next:*
+1. Pull `feature/grading-ui`. `docker compose restart api` (no compose changes; mounts already in place from R11).
+2. Open `/admin/grade/[report_id]`, pick a golden film in the dropdown, click Start grading, classify a handful of claims, walk to the end.
+3. Confirm the green `✅ EVAL_SCORES.md + snapshot written` banner shows a filename like `<film_id>_v1.0_2026-05-21T19-32-14Z.json`.
+4. On the host: `ls eval_snapshots/` → one new file. `jq . eval_snapshots/<filename>` — confirm `report_content` has all six sections, `classifications` has the claims you classified, `ground_truth_ref` matches the golden film you picked.
+5. Re-grade the same report. New file written (fresh timestamp), prior file untouched.
+6. Edge: complete a session *without* selecting a golden film in the dropdown — confirm `ground_truth_ref` in the JSON is `null`, not a guess.
+7. Smoke the failure path: `chmod -w eval_snapshots/` before completing a session. Confirm the amber `⚠ Snapshot write failed but session was logged` banner appears and `EVAL_SCORES.md` still got the row. `chmod +w` after.
+
+*Out of scope (intentionally untouched):* corrections table schema, walker classification flow, keyboard shortcuts, undo, R3+R10 save wiring, EVAL_SCORES.md / JSONL formats from R11, docker-compose mounts, Pattern Analyzer, legacy `/admin` form.
+
+---
 
 **Session log (2026-05-21, after #45 merge) — R11 EVAL_SCORES.md + JSONL auto-writer; build item 7 of 9:**
 

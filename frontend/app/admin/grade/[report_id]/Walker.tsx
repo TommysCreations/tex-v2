@@ -763,18 +763,32 @@ function SummaryScreen({
         )}
       </div>
 
-      {/* R11: EVAL_SCORES ledger status — writes one row to
-          EVAL_SCORES.md + one line to EVAL_SCORES.jsonl at the repo root.
-          R12 (disk snapshot of the full graded report) is the next PR. */}
+      {/* R11 + R12: ledger + snapshot status. EVAL_SCORES.md / jsonl is
+          the longitudinal log; eval_snapshots/<file>.json is the full
+          per-session forensic record. Snapshot-only failures degrade
+          gracefully — the green banner downgrades to amber + warning. */}
       {evalStatus.kind === 'pending' && (
         <p className="mt-3 rounded border border-border bg-surface px-3 py-2 text-xs text-gray-300">
           Writing EVAL_SCORES.md…
         </p>
       )}
-      {evalStatus.kind === 'ok' && (
+      {evalStatus.kind === 'ok' && evalStatus.rollup.snapshot_path && (
         <p className="mt-3 rounded border border-green-500/40 bg-green-500/10 px-3 py-2 text-xs text-green-200">
+          ✅ EVAL_SCORES.md + snapshot written · session logged (
+          {evalStatus.rollup.total_claims} claims, prompt {evalStatus.rollup.prompt_version}).
+          <span className="ml-1 text-[10px] text-green-300/80">
+            {evalStatus.rollup.snapshot_path.split('/').pop()}
+          </span>
+        </p>
+      )}
+      {evalStatus.kind === 'ok' && !evalStatus.rollup.snapshot_path && (
+        <p className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           ✅ EVAL_SCORES.md updated · session logged ({evalStatus.rollup.total_claims} claims,
-          prompt {evalStatus.rollup.prompt_version}).
+          prompt {evalStatus.rollup.prompt_version}).{' '}
+          <span className="text-amber-300">
+            ⚠ Snapshot write failed but session was logged — see network tab.
+            {evalStatus.rollup.snapshot_error ? ` (${evalStatus.rollup.snapshot_error})` : ''}
+          </span>
         </p>
       )}
       {evalStatus.kind === 'error' && (
@@ -782,9 +796,6 @@ function SummaryScreen({
           ⚠ EVAL_SCORES.md write failed — see network tab. ({evalStatus.message})
         </p>
       )}
-      <p className="mt-2 text-[10px] text-gray-500">
-        Disk snapshot of the full graded report (R12) is the next PR.
-      </p>
 
       <button
         type="button"
