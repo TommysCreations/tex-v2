@@ -715,6 +715,29 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-029 — Raised process_film Celery time limits from 7000/7200s to 14000/14400s
+
+**Date:** 2026-05-23
+**Status:** Adopted
+
+**Decision:** `process_film` in `backend/tasks/film_processing.py` runs with `soft_time_limit=14000` (~233 min) and `time_limit=14400` (240 min = 4 hours). Previous values were `soft_time_limit=7000` / `time_limit=7200` set in D-026.
+
+**Rationale:** Yesterday (D-027) we raised the inner FFmpeg subprocess timeout from 3600s to 7000s to fix three films failing during compression. Today, two more films failed with `SoftTimeLimitExceeded` while still mid-compression — the outer Celery wrapper was the next binding constraint, not the inner subprocess. Empirical observation: Brad Beal Elite and Florida Rebels both hit the limit at exactly 117 min (the 7000s soft mark) while FFmpeg was still re-encoding. The 7000/7200 budget from D-026 was sized to cover compression alone; it left no room for the rest of the pipeline (R2 download + FFprobe validate + split + chunk upload to Gemini File API + DB writes). 4-hour budget reflects the real-world worst case (large file + slow CPU + chunk uploads over residential bandwidth) with margin, while still being short enough that a genuinely stuck task — e.g., infinite loop, deadlock — eventually surfaces.
+
+**What this changes:**
+- `backend/tasks/film_processing.py` decorator on `process_film`: `soft_time_limit=14000`, `time_limit=14400`.
+- AGENTS.md timeout reference table for `process_film` will need to be updated to 233/240 min (out of scope for this PR — flagged as follow-up doc work).
+- Existing error strings in `film_processing.py` lines 452 + 458 still read "Processing timed out after 120 minutes" — also out of scope per the narrow brief, flagged as follow-up.
+
+**Alternatives considered:**
+- Tighter budget (e.g., 10800/11000 = 3 hours): rejected — only ~30-min margin over today's empirical fail point. Not enough headroom for unfavorable network conditions or larger films coaches may upload (some EYBL film sources export 1080p60 at >4 GB).
+- Auto-retry with exponential backoff: noted as deferred in D-028. Doesn't solve the underlying need — a task that times out at 7000s also times out at 7000s on retry. Backoff helps for transient API errors, not for "the pipeline genuinely takes longer than the budget."
+- Pre-compression on the coach's device before upload: rejected — adds significant UX friction and defeats the "drop your raw film in" core value prop. Some coaches don't have tools (or know-how) to re-encode locally.
+
+**Reversal condition:** Production Cloud Run workers (with proper CPU allocations, not Docker for Mac) consistently complete `process_film` in well under 90 minutes, AND we've seen no large-film tail-latency cases that approach the new ceiling. At that point, tighten back toward a 2-hour budget so stuck-task detection latency improves.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -733,5 +756,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 23, 2026 — D-027 + D-028 added (FFmpeg compress subprocess timeout raised 3600→7000s; admin-only film retry endpoint).*
-*28 decisions logged. All decisions current as of this date.*
+*Last updated: May 23, 2026 — D-029 added (process_film Celery limits raised 7000/7200s → 14000/14400s after empirical 117-min fail point on real films).*
+*29 decisions logged. All decisions current as of this date.*

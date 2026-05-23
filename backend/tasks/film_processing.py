@@ -258,8 +258,8 @@ def _fail_film_from_chunk(film_id: str, error_message: str):
     queue="film_processing",
     max_retries=3,
     default_retry_delay=30,
-    soft_time_limit=7000,
-    time_limit=7200,
+    soft_time_limit=14000,
+    time_limit=14400,
     acks_late=True,
 )
 def process_film(self, film_id: str):
