@@ -13,7 +13,7 @@ def compress_film(input_path: str, output_path: str) -> None:
 
     Only called when file_size_bytes > 1.8GB.
     H.264, CRF 28, scale to 720p height (preserving aspect ratio), AAC 128k audio.
-    Timeout: 3600 seconds (1 hour).
+    Timeout: 7000 seconds (~117 min).
 
     Raises FFmpegError on failure.
     """
@@ -40,10 +40,10 @@ def compress_film(input_path: str, output_path: str) -> None:
             ],
             capture_output=True,
             text=True,
-            timeout=3600,
+            timeout=7000,
         )
     except subprocess.TimeoutExpired as err:
-        raise FFmpegError("Film compression timed out after 60 minutes.") from err
+        raise FFmpegError("Film compression timed out after 117 minutes.") from err
     except FileNotFoundError as err:
         raise FFmpegError("FFmpeg is not installed on this worker.") from err
 

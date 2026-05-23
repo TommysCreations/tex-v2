@@ -13,12 +13,33 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
 **Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 + R9-visual + R11 + R12 all in.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44), R9 visual polish (#45), R11 EVAL_SCORES auto-writer (#46) merged to `main`. **R12 (eval_snapshots/ JSON flight-recorder) opened as a follow-up PR on `feature/grading-ui`. Same `POST /admin/grading-sessions/complete` handler now writes a third artifact per session: a pretty-printed JSON snapshot at `eval_snapshots/{film_id}_{prompt_version}_{ISO8601_compact}.json` containing the full TEX report content, the ground-truth ref, every per-claim verdict, and the rollup. `eval_snapshots/` is gitignored — files are forensic, not checked in. Tommy to smoke-test and merge.** With R12 merged the grading UI build is COMPLETE; next workstream is Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) per the 2026-05-19 launch-checklist plan.
 **Blockers:** None code-side. Phase 3.17 (Film 04 synthesis smell-test → generate_report smoke → PDF sniff test) and the formal Stage 1 grading runs are now the next workstreams, no longer blocked by grading-UI build.
-**Last Updated:** May 21, 2026 — R12 eval_snapshots JSON writer PR opened on `feature/grading-ui` after #46 merge.
+**Last Updated:** May 23, 2026 — `feature/film-retry-and-timeout-fix` opened: `compress_film` subprocess timeout raised 3600→7000s and new admin-only `POST /admin/films/{film_id}/retry` route added so we can recover failed films without forcing re-upload. See D-027 + D-028.
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-23) — FFmpeg compress timeout fix + admin film retry endpoint:**
+
+Three real-world 1080p game films (3-4 GB) failed today with `"Film compression timed out after 60 minutes."` The 3600s subprocess timeout inside `compress_film` was an undocumented guess that pre-dated D-026's `process_film` Celery limit (`soft_time_limit=7000` / `time_limit=7200`). The inner `subprocess.run` was killing FFmpeg long before the parent task ran out of budget. Two-part fix on `feature/film-retry-and-timeout-fix` (branched off `main`):
+
+*What landed:*
+- `backend/services/ffmpeg.py::compress_film` — `timeout=3600` → `timeout=7000` (~117 min, just under the parent Celery soft limit so the timeouts compose cleanly). Docstring + error string updated to match ("Film compression timed out after 117 minutes."). `split_film`'s 1800s timeout is untouched — splitting runs on already-compressed files where 30 min is plenty.
+- `backend/routers/admin.py` — new `POST /admin/films/{film_id}/retry` (admin-gated via `require_admin`). Fetches the film (no `user_id` scope — admins recover any coach's film), validates `status == 'error'` (409 otherwise) and `r2_key` is non-empty (400 otherwise), 404s on missing/deleted films. Resets `status='uploaded'`, `gemini_processing_status=NULL`, `chunk_count=NULL`, `synthesis_failed=FALSE`, `error_message=NULL`, `updated_at=now()` in a single transaction, then enqueues `process_film.delay(film_id)`. Returns 202 `{film_id, status: "uploaded", message: "Retry enqueued"}`. R2 object is untouched — worker re-pulls it on the next run.
+- `DECISIONS.md` — D-027 (subprocess timeout 3600→7000s) + D-028 (admin film retry endpoint, with auto-retry-with-backoff explicitly deferred).
+
+*What is intentionally NOT in this PR:*
+- Auto-retry with exponential backoff (logged on D-028 as a future enhancement).
+- Changes to `split_film`'s timeout (already adequate; out of scope).
+- Watchdog / `recover_stuck_jobs` changes (separate concern; out of scope).
+
+*Verification:*
+- `python3 -c "import ast; ast.parse(open('backend/routers/admin.py').read())"` → syntax OK.
+- `python3 -c "import ast; ast.parse(open('backend/services/ffmpeg.py').read())"` → syntax OK.
+- Manual integration test (re-enqueueing a real Celery task) intentionally skipped per the brief — handler-level verification of 404 / 409 / 400 / 202 paths is sufficient pre-merge.
+
+---
 
 **Session log (2026-05-21, after #46 merge) — R12 eval_snapshots/ JSON flight-recorder; build item 8 of 9 (grading UI build COMPLETE):**
 

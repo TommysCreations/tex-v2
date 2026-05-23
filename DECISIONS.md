@@ -680,6 +680,41 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-027 — FFmpeg compress subprocess timeout raised to 7000s
+
+**Date:** 2026-05-23
+**Status:** Adopted
+
+**Decision:** `compress_film` in `backend/services/ffmpeg.py` runs the FFmpeg subprocess with `timeout=7000` (~117 min). Previous value was `timeout=3600` (60 min). The error message changes from "Film compression timed out after 60 minutes." to "Film compression timed out after 117 minutes."
+
+**Rationale:** The 3600s value was an undocumented guess that pre-dated empirical measurement on production-realistic film sizes. Three real-world 1080p game films (3-4 GB) failed today against the 60-minute subprocess limit even though the parent Celery `process_film` task had budget remaining (D-026 set `soft_time_limit=7000` / `time_limit=7200`). Raising the inner subprocess limit to 7000s lines it up just under the parent task's soft limit, giving a single coherent timeout boundary instead of two competing ones. `split_film`'s 1800s timeout is untouched — splitting runs on already-compressed files and 30 min is comfortably enough.
+
+**Alternatives considered:**
+- Leave at 3600s and require coaches to pre-compress: rejected — adds upload friction, undermines "drop your raw film in" UX.
+- Lift to 7200s (match parent hard limit): rejected — leaves no headroom for the parent to surface a clean Celery timeout error vs. a subprocess kill. 7000s keeps ~3 min of parent margin.
+
+**Reversal condition:** Production Cloud Run compression runs consistently complete in well under 60 minutes AND a smaller timeout would catch real stuck-FFmpeg cases faster than the existing watchdog. At that point, tighten back toward 3600s.
+
+---
+
+## D-028 — Admin-only film retry endpoint
+
+**Date:** 2026-05-23
+**Status:** Adopted
+
+**Decision:** New route `POST /admin/films/{film_id}/retry` (admin-gated via `require_admin`) re-enqueues `process_film` for a film stuck in `status='error'` without requiring the coach to re-upload. The handler resets `status='uploaded'`, `gemini_processing_status=NULL`, `chunk_count=NULL`, `synthesis_failed=FALSE`, `error_message=NULL`, `updated_at=now()` in a single transaction and calls `process_film.delay(film_id)`. Returns 404 (not found), 409 (status not 'error'), 400 (missing r2_key), or 202 Accepted. Automatic retry with exponential backoff is deferred as a future enhancement.
+
+**Rationale:** When `process_film` fails terminally (e.g., the D-027 timeout case before today's fix, or transient Gemini File API errors), the R2 object is still present and the film row already has the right ids — only the processing-state columns need to be cleared. Forcing the coach to re-upload a 4 GB film over residential bandwidth to recover from a server-side failure is a worse experience than an admin clicking a button. Admin-only because the failure-credit policy (D-017) already handles the coach-facing case; this endpoint is for operator recovery, not user self-service. The user-facing `POST /films/{film_id}/retry` route already exists for coach self-service on their own films — the admin route is parallel but scopes by `film_id` only (no `user_id` filter), so admins can recover films owned by any coach.
+
+**Alternatives considered:**
+- Reuse the user-facing `/films/{film_id}/retry` and require admins to impersonate the coach: rejected — impersonation flow doesn't exist and adding one for this is overkill.
+- Build full auto-retry with exponential backoff now: rejected for v1. Most failures we've seen are either (a) timeouts that won't resolve without code changes or (b) transient API errors that succeed on a single manual retry. Auto-retry adds complexity (jitter, max-attempt accounting, dead-letter interaction with the existing watchdog) for an unclear win pre-launch. Revisit once we have data on failure-cause distribution.
+- Allow retry on non-'error' statuses (e.g., re-process a 'processed' film against a new prompt): rejected — that's a different operation ("re-extract") that should be its own endpoint with its own semantics. Keeping retry narrow prevents accidental double-processing.
+
+**Reversal condition:** Failure rate stabilizes low enough that manual operator retry is no longer the bottleneck, OR a clear pattern of transient-only failures emerges that auto-retry could handle without operator involvement.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -698,5 +733,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 19, 2026 — D-024/D-025/D-026 added (synthesis-only mode canonical, graceful degradation removed, process_film timeouts confirmed at 117/120 min).*
-*26 decisions logged. All decisions current as of this date.*
+*Last updated: May 23, 2026 — D-027 + D-028 added (FFmpeg compress subprocess timeout raised 3600→7000s; admin-only film retry endpoint).*
+*28 decisions logged. All decisions current as of this date.*
