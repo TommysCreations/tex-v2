@@ -262,6 +262,76 @@ async def get_admin_report_detail(
 
 
 # ---------------------------------------------------------------------------
+# POST /admin/films/{film_id}/retry — re-enqueue process_film for a failed
+# film without forcing the coach to re-upload. R2 object is still there;
+# only DB state needs to be reset.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/films/{film_id}/retry", status_code=202)
+async def retry_film_admin(
+    film_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Admin-only: re-process a film stuck in status='error'.
+
+    Only allowed when the film is currently errored AND r2_key is populated
+    — otherwise there's nothing to retry against. Resets the processing
+    state columns (gemini_processing_status, chunk_count, synthesis_failed,
+    error_message) so the worker starts from a clean slate.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT status, r2_key FROM films "
+                "WHERE id = %s AND deleted_at IS NULL",
+                (film_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Film not found")
+
+            current_status, r2_key = row[0], row[1]
+            if current_status != "error":
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Film status is '{current_status}', retry only allowed on 'error'",
+                )
+            if not r2_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Film has no r2_key — nothing to retry against",
+                )
+
+            cur.execute(
+                "UPDATE films SET status = 'uploaded', "
+                "gemini_processing_status = NULL, chunk_count = NULL, "
+                "synthesis_failed = FALSE, error_message = NULL, "
+                "updated_at = now() "
+                "WHERE id = %s",
+                (film_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    from tasks.film_processing import process_film
+
+    process_film.delay(film_id)
+
+    logger.info(
+        "Admin film retry enqueued",
+        extra={"film_id": film_id, "admin_id": str(user["id"])},
+    )
+    return {
+        "film_id": film_id,
+        "status": "uploaded",
+        "message": "Retry enqueued",
+    }
+
+
+# ---------------------------------------------------------------------------
 # 4.2 — GET /admin/corrections
 # ---------------------------------------------------------------------------
 
