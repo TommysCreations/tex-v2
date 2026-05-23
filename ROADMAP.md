@@ -13,12 +13,36 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete). **Film 04 preprocess (Montverde vs Brewster):** Neon **`film_analysis_cache.prompt_version = v1.0|v1.6`** (2026-05-15 dev run). All four **`extract_chunk`** jobs re-ran Prompt **0A v1.6**; **`run_chunk_synthesis`** wrote **~17.4K char** **`synthesis_document`** (Prompt **0B v1.6**). Stored Gemini file URIs had **403 / expired** after days idle — workaround for re-runs: null **`gemini_file_uri`** and set **`gemini_file_state = 'uploading'`** so **`extract_chunk`** re-pulls from R2 and re-uploads to File API before Prompt 0A.
 **Active Task:** **Grading UI build — items 1 + 2 + 3 + 4 + 5 + 6 + R9-visual + R11 + R12 all in.** R6 (#37), R13 (#38), R8 (#39), R7 (#40), R9 (#43), R3+R10 (#44), R9 visual polish (#45), R11 EVAL_SCORES auto-writer (#46) merged to `main`. **R12 (eval_snapshots/ JSON flight-recorder) opened as a follow-up PR on `feature/grading-ui`. Same `POST /admin/grading-sessions/complete` handler now writes a third artifact per session: a pretty-printed JSON snapshot at `eval_snapshots/{film_id}_{prompt_version}_{ISO8601_compact}.json` containing the full TEX report content, the ground-truth ref, every per-claim verdict, and the rollup. `eval_snapshots/` is gitignored — files are forensic, not checked in. Tommy to smoke-test and merge.** With R12 merged the grading UI build is COMPLETE; next workstream is Phase 3.17 (Film 04 synthesis smell-test → **`generate_report`** smoke) per the 2026-05-19 launch-checklist plan.
 **Blockers:** None code-side. Phase 3.17 (Film 04 synthesis smell-test → generate_report smoke → PDF sniff test) and the formal Stage 1 grading runs are now the next workstreams, no longer blocked by grading-UI build.
-**Last Updated:** May 23, 2026 — `feature/film-retry-and-timeout-fix` opened: `compress_film` subprocess timeout raised 3600→7000s and new admin-only `POST /admin/films/{film_id}/retry` route added so we can recover failed films without forcing re-upload. See D-027 + D-028.
+**Last Updated:** May 23, 2026 — `feature/raise-process-film-timeouts` opened: outer Celery `process_film` limits raised 7000/7200s → 14000/14400s (~4 hr) after two more films hit `SoftTimeLimitExceeded` at exactly 117 min while still compressing. See D-029. (Earlier today: D-027 + D-028 — inner FFmpeg subprocess timeout 3600→7000s + admin film retry endpoint, merged as #48.)
 
 **Session note (2026-05-14, documentation sync):** Brought **`CLAUDE.md` / `ROADMAP.md` / `PROMPTS.md`** current with codebase. Historical session logs below (2026-05-12 late evening, etc.) remain accurate snapshots; top-of-file **CURRENT STATE** is authoritative for what to do next.
 
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
+
+**Session log (2026-05-23, later) — Celery process_film time limits raised to 4 hours:**
+
+Yesterday's #48 raised the *inner* FFmpeg subprocess timeout from 3600s to 7000s. Today's run on a different batch of films exposed the next layer: two films (Brad Beal Elite + Florida Rebels) failed with `SoftTimeLimitExceeded` at exactly 117 min while FFmpeg was still re-encoding. The *outer* Celery wrapper around `process_film` was still on D-026's 7000s soft / 7200s hard budget, which was sized to cover compression alone — it left no room for the rest of the pipeline (R2 download + FFprobe validate + split + chunk upload to Gemini File API + DB writes).
+
+Single-line code change on `feature/raise-process-film-timeouts` (off `main`):
+- `backend/tasks/film_processing.py` — `@celery_app.task(...)` decorator on `process_film`: `soft_time_limit=7000` → `14000`, `time_limit=7200` → `14400`. ~4-hour budget. Reflects real-world worst case (large file + slow CPU + chunk uploads over residential bandwidth) with margin.
+
+Docs:
+- `DECISIONS.md` D-029 with the empirical fail-point evidence (BBE + Rebels both at 117 min) and the rationale for 4 hr vs tighter 3 hr alternative.
+- This roadmap entry + "Last Updated" bump.
+
+*What is intentionally NOT in this PR:*
+- Changes to `compress_film` / `split_film` subprocess timeouts (compress already addressed in D-027 / #48; split's 1800s is comfortably enough on already-compressed files).
+- Auto-retry with exponential backoff (already logged as future enhancement in D-028 — wouldn't help here anyway; a task that times out at 7000s also times out at 7000s on retry, the issue is budget not transience).
+- Frontend "10-20 minutes" UI estimate copy (separate copy fix; flagged as tech debt for a follow-up PR — coaches uploading 4 GB films should not see a 10-20 min estimate).
+- AGENTS.md timeout reference table update (still says 117/120 min from D-026 — flagged as follow-up doc work, kept narrow per brief).
+- The two stale "Processing timed out after 120 minutes" error strings in `film_processing.py` (lines 452 + 458) — now incorrect since the new hard limit is 240 min. Left alone per the "decorator change is the only edit" instruction; flagged here as follow-up.
+
+*Verification:*
+- `python3 -c "import ast; ast.parse(open('backend/tasks/film_processing.py').read())"` → syntax OK.
+- No real integration test (no time per brief).
+
+---
 
 **Session log (2026-05-23) — FFmpeg compress timeout fix + admin film retry endpoint:**
 
