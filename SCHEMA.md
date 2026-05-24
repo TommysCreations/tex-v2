@@ -169,7 +169,7 @@ CREATE TABLE films (
   duration_seconds          integer,                       -- null until FFprobe runs
   file_hash                 text,                          -- SHA-256 of raw bytes. null until worker downloads.
   status                    text        NOT NULL DEFAULT 'uploaded',
-                            -- 'uploaded' | 'processing' | 'processed' | 'error'
+                            -- 'uploaded' | 'processing' | 'chunks_uploaded' | 'processed' | 'error'
   gemini_processing_status  text,
                             -- null until chunks are uploading: 'uploading' | 'active' | 'failed'
   chunk_count               integer,                       -- null until FFmpeg splits
@@ -190,7 +190,7 @@ CREATE INDEX idx_films_file_hash ON films(file_hash) WHERE file_hash IS NOT NULL
 The worker computes SHA-256 after downloading the raw film to /tmp, then updates this column.
 The film fingerprint cache lookup (`film_analysis_cache`) uses this hash.
 
-`status` progression: `uploaded` → `processing` → `processed` → (report triggered) → `complete`
+`status` progression: `uploaded` → `processing` → `chunks_uploaded` → `processed` → (report triggered) → `complete`
 `error` is a terminal state that requires human intervention or retry.
 
 `duration_seconds` and `chunk_count` are null until FFprobe runs on the worker. UI shows

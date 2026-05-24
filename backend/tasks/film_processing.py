@@ -294,7 +294,7 @@ def process_film(self, film_id: str):
         file_name = row[3]
         current_status = row[4]
 
-        if current_status in ("processing", "processed", "error"):
+        if current_status in ("processing", "chunks_uploaded", "processed", "error"):
             log.info("process_film: film %s already %s, skipping", film_id, current_status)
             return
 

@@ -66,12 +66,17 @@ def recover_stuck_jobs():
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # Stuck films
+            # Stuck films — reset status to 'uploaded' in the same statement
+            # that selects them. Without this, the re-enqueued process_film
+            # hits its idempotency guard, sees status='processing', and skips,
+            # so the film never recovers. Resetting to 'uploaded' (not in the
+            # guard's skip set) lets the re-run proceed from the top.
             cur.execute(
-                "SELECT id FROM films "
+                "UPDATE films SET status = 'uploaded', updated_at = now() "
                 "WHERE status = 'processing' "
                 "AND updated_at < now() - interval '2 hours' "
-                "AND deleted_at IS NULL"
+                "AND deleted_at IS NULL "
+                "RETURNING id"
             )
             stuck_films = cur.fetchall()
 
@@ -83,6 +88,7 @@ def recover_stuck_jobs():
                 "AND deleted_at IS NULL"
             )
             stuck_reports = cur.fetchall()
+        conn.commit()
     finally:
         conn.close()
 
