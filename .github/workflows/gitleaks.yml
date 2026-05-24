@@ -21,7 +21,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Full history so gitleaks can scan every commit on the PR, not just
           # the latest snapshot. Required for catching secrets that were added
