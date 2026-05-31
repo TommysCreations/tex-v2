@@ -28,7 +28,7 @@ jobs:
           # then "deleted" in a later commit but remain in history.
           fetch-depth: 0
 
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pin tool version to the same one referenced by the pre-commit hook.
