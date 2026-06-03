@@ -4,9 +4,11 @@ This is a second, independent consumer of the SAME chunk videos the report
 pipeline uses. It is the perception/truth layer and is graded separately from
 the report. It is deliberately decoupled from the report path:
 
-  * Reads only:  films.team_id and read-only chunk metadata from film_chunks
-                 (chunk_index, r2_chunk_key, gemini_file_uri,
-                 gemini_file_expires_at, gemini_file_state).
+  * Reads only:  films.team_id, the scouted team's seeded name (teams.name),
+                 the seeded roster (roster_players, pre-film seed source only),
+                 and read-only chunk metadata from film_chunks (chunk_index,
+                 r2_chunk_key, gemini_file_uri, gemini_file_expires_at,
+                 gemini_file_state).
                  It NEVER reads films.status, film_chunks.extraction_output,
                  the Prompt 0B synthesis input, film_analysis_cache, or
                  report_sections.
@@ -59,15 +61,20 @@ SECTION_TYPE = "possession_log"
 _EXPIRY_MARGIN_SECONDS = 3600
 
 
-def build_prompt(roster_text: str) -> str:
-    """Load the Stage A extraction prompt and inject the seeded roster.
+def build_prompt(scouted_team_name: str, opponent_team_name: str, roster_text: str) -> str:
+    """Load the Stage A extraction prompt and inject the per-game parameters.
 
-    The prompt is the Film-01 (Brad Beal Elite vs Team Durant) calibration
-    spine — scouted-team / opponent names are baked in by design. Generalizing
-    them is future work (see the offensive-spine GitHub issues).
+    The prompt template (backend/prompts/possession_log.txt) is parameterized:
+    {scouted_team} and {opponent} drive every team reference, and {roster} is
+    the seeded pre-film roster for the scouted team. The charting discipline is
+    fixed in the template and never varies per game.
     """
     template, _version = load_prompt(SECTION_TYPE)
-    return template.format(roster=roster_text)
+    return template.format(
+        scouted_team=scouted_team_name,
+        opponent=opponent_team_name,
+        roster=roster_text,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +219,28 @@ def _resolve_chunk_uri(
 # ---------------------------------------------------------------------------
 
 
-def run_possession_log(film_id: str) -> dict:
+def run_possession_log(
+    film_id: str,
+    opponent_team_name: str,
+    scouted_team_name: str | None = None,
+) -> dict:
     """Chart every offensive possession across one film's chunks, append-only.
+
+    Args:
+        film_id: the film to chart.
+        opponent_team_name: the opposing team's name (not stored structurally,
+            so it must be supplied by the caller).
+        scouted_team_name: the scouted team's name. If omitted, it is derived
+            read-only from the film's seeded team (films.team_id -> teams.name).
+
+    The seeded roster handed to Gemini is sourced ONLY from the pre-film seed
+    data (roster_players for the film's team), never from any ground-truth or
+    film_watch_notes source.
 
     Returns a summary dict:
         {
           "film_id": ..., "run_id": ..., "team_id": ...,
+          "scouted_team_name": ..., "opponent_team_name": ...,
           "chunks": [{"chunk_index": 0, "possessions": 7, "status": "ok"}, ...],
           "total_possessions": 23,
           "failed_chunks": [2],
@@ -234,15 +257,21 @@ def run_possession_log(film_id: str) -> dict:
     log.info("possession_log: starting run %s for film %s", run_id, film_id)
 
     try:
-        # 1. Read team_id (NOT status) and the chunk metadata — all read-only.
+        # 1. Read team_id (NOT status) + team name and the chunk metadata —
+        #    all read-only. teams.name is the scouted team's seeded name.
         conn = get_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT team_id FROM films WHERE id = %s", (film_id,))
+                cur.execute(
+                    "SELECT f.team_id, t.name FROM films f "
+                    "LEFT JOIN teams t ON t.id = f.team_id WHERE f.id = %s",
+                    (film_id,),
+                )
                 film_row = cur.fetchone()
                 if not film_row:
                     raise RuntimeError(f"Film not found: {film_id}")
                 team_id = str(film_row[0]) if film_row[0] else None
+                seeded_team_name = film_row[1]
 
                 cur.execute(
                     "SELECT chunk_index, r2_chunk_key, gemini_file_uri, "
@@ -257,8 +286,23 @@ def run_possession_log(film_id: str) -> dict:
         if not chunk_rows:
             raise RuntimeError(f"No chunks found for film {film_id}")
 
+        # Scouted team name: caller override, else the film's seeded team name.
+        resolved_scouted = scouted_team_name or seeded_team_name
+        if not resolved_scouted:
+            raise RuntimeError(
+                f"film {film_id}: no scouted team name (film has no seeded team) — "
+                f"pass scouted_team_name explicitly"
+            )
+
+        # Seeded roster — pre-film seed source only (roster_players for the team).
         roster_text = format_roster_for_prompt(team_id) if team_id else "(no roster data available)"
-        prompt = build_prompt(roster_text)
+        prompt = build_prompt(resolved_scouted, opponent_team_name, roster_text)
+        log.info(
+            "possession_log: scouted=%s opponent=%s for film %s",
+            resolved_scouted,
+            opponent_team_name,
+            film_id,
+        )
 
         provider = get_ai_provider()
         chunk_summaries: list[dict] = []
@@ -330,6 +374,8 @@ def run_possession_log(film_id: str) -> dict:
             "film_id": film_id,
             "run_id": run_id,
             "team_id": team_id,
+            "scouted_team_name": resolved_scouted,
+            "opponent_team_name": opponent_team_name,
             "chunks": chunk_summaries,
             "total_possessions": total_possessions,
             "failed_chunks": failed_chunks,

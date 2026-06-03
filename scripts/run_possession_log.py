@@ -6,16 +6,24 @@ videos read-only and writes append-only rows to possession_logs. It does NOT
 touch the report pipeline: no films.status changes, no run_chunk_synthesis or
 generate_report interaction, no advisory lock.
 
-Usage:
-    python scripts/run_possession_log.py <film_id>
+The scouted team / opponent / seeded roster are parameterized (no game is
+hardcoded). Scouted team defaults to the film's seeded team (films.team_id ->
+teams.name); the opponent is required because it is not stored structurally.
+The seeded roster handed to Gemini comes ONLY from the pre-film seed data
+(roster_players for that team) — never from any ground-truth source.
 
-Film 01 (Brad Beal Elite vs Team Durant):
-    python scripts/run_possession_log.py 6d28b154-237b-4900-8861-4bbddf56d89c
+Usage:
+    python scripts/run_possession_log.py <film_id> --opponent "<name>" [--scouted "<name>"]
+
+Film 04 (Montverde vs Brewster):
+    python scripts/run_possession_log.py 86bc2f7a-b8be-4ec4-a749-a94cda24393f \\
+        --scouted "Montverde" --opponent "Brewster"
 
 Requires NEON_*, CLOUDFLARE_R2_*, GEMINI_API_KEY, REDIS_URL in backend/.env.
 Exits non-zero if any chunk failed.
 """
 
+import argparse
 import os
 import sys
 
@@ -38,10 +46,20 @@ def load_env() -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("Usage: python scripts/run_possession_log.py <film_id>")
-        sys.exit(2)
-    film_id = sys.argv[1].strip()
+    parser = argparse.ArgumentParser(
+        description="Run the Stage A possession-log pass on one film."
+    )
+    parser.add_argument("film_id", help="film UUID")
+    parser.add_argument(
+        "--opponent", required=True, help="opposing team name (not stored in seed data)"
+    )
+    parser.add_argument(
+        "--scouted",
+        default=None,
+        help="scouted team name (defaults to the film's seeded team name)",
+    )
+    args = parser.parse_args()
+    film_id = args.film_id.strip()
 
     load_env()
     for var in (
@@ -59,11 +77,17 @@ def main() -> None:
     from services.possession_log import run_possession_log
 
     print(f"Running possession-log pass on film {film_id} ...")
-    summary = run_possession_log(film_id)
+    summary = run_possession_log(
+        film_id,
+        opponent_team_name=args.opponent,
+        scouted_team_name=args.scouted,
+    )
 
     print()
     print(f"run_id:            {summary['run_id']}")
     print(f"team_id:           {summary['team_id']}")
+    print(f"scouted team:      {summary['scouted_team_name']}")
+    print(f"opponent:          {summary['opponent_team_name']}")
     print(f"total possessions: {summary['total_possessions']}")
     print("per-chunk:")
     for c in summary["chunks"]:
