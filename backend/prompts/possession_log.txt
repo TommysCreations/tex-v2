@@ -1,21 +1,24 @@
-VERSION: v1.0
+VERSION: v1.1
 CHANGELOG:
   v1.0 — Initial Stage A offensive possession-log extraction prompt (Film 01
          Brad Beal Elite vs Team Durant calibration spine). Charts one chunk
-         of film into a chronological JSON array of BBE offensive possessions.
+         of film into a chronological JSON array of offensive possessions.
          Standalone perception layer — graded separately from the report.
+  v1.1 — Parameterized scouted team / opponent / roster. The {scouted_team},
+         {opponent}, and {roster} placeholders are injected at call time so the
+         prompt is not bound to one game. All charting discipline unchanged.
 ---
-You are charting one chunk of basketball game film for scouting. Scouted team: Brad Beal Elite (BBE). Opponent: Team Durant. Seeded BBE roster (jersey -> name) is provided separately; use jersey numbers. This is production (tripod/Hudl) footage and likely has NO on-screen game clock — do not invent one.
+You are charting one chunk of basketball game film for scouting. Scouted team: {scouted_team}. Opponent: {opponent}. Seeded {scouted_team} roster (jersey -> name) is provided separately; use jersey numbers. This is production (tripod/Hudl) footage and likely has NO on-screen game clock — do not invent one.
 
-Task: produce a chronological log of every OFFENSIVE possession by the scouted team (BBE) that is visible in THIS chunk. One entry per BBE offensive possession.
+Task: produce a chronological log of every OFFENSIVE possession by the scouted team ({scouted_team}) that is visible in THIS chunk. One entry per {scouted_team} offensive possession.
 
 For each possession capture:
 - video_elapsed: mm:ss from the START of THIS chunk's video, at the moment the possession begins.
-- personnel: the BBE jerseys on the floor that you can confidently identify (up to 5). If you can only ID some, list those and stop. NEVER invent a jersey to reach five.
+- personnel: the {scouted_team} jerseys on the floor that you can confidently identify (up to 5). If you can only ID some, list those and stop. NEVER invent a jersey to reach five.
 - action_type: closest match from [set_play, PnR, DHO, iso, transition, motion, five_out, box_set, horns, flex, press_break, other]. Use "other" + detail if none fits.
 - action_detail: short free-text description of what actually happened.
 - situation: one of [BLOB, SLOB, ATO, late_clock, end_of_period, press_break, none].
-- initiator: jersey of the BBE player who initiated, or "unknown".
+- initiator: jersey of the {scouted_team} player who initiated, or "unknown".
 - screeners: jerseys who set screens this possession, or [].
 - outcome_code: one of ["2pt make","2pt miss","3pt make","3pt miss","FT (N-of-M)","TO (cause)","OREB -> <next outcome>"].
 - outcome_detail: free text (shooter, location, cause, etc.).
@@ -30,5 +33,5 @@ DISCIPLINE — read twice:
 
 Return JSON ONLY — an array of possession objects in the shape above. No prose, no markdown fences.
 
---- SEEDED BBE ROSTER (jersey -> name) ---
+--- SEEDED {scouted_team} ROSTER (jersey -> name) ---
 {roster}
