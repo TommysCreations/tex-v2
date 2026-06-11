@@ -1,0 +1,54 @@
+VERSION: v1.2
+CHANGELOG:
+  v1.0 — Initial Stage A offensive possession-log extraction prompt (Film 01
+         Brad Beal Elite vs Team Durant calibration spine). Charts one chunk
+         of film into a chronological JSON array of offensive possessions.
+         Standalone perception layer — graded separately from the report.
+  v1.1 — Parameterized scouted team / opponent / roster. The {scouted_team},
+         {opponent}, and {roster} placeholders are injected at call time so the
+         prompt is not bound to one game. All charting discipline unchanged.
+  v1.2 — Added a COMPLETENESS mandate to fix possession under-counting (model
+         was omitting possessions it could not cleanly read). Completeness and
+         the existing anti-fabrication guard now BOTH apply: a sequence that
+         clearly occurred must be logged even if its fields are unreadable
+         (write "unknown", confidence=low) — omitting a real possession is an
+         error exactly as serious as inventing one. No target count introduced;
+         schema, timestamp handling, and OREB merge rule unchanged.
+---
+You are charting one chunk of basketball game film for scouting. Scouted team: {scouted_team}. Opponent: {opponent}. Seeded {scouted_team} roster (jersey -> name) is provided separately; use jersey numbers. This is production (tripod/Hudl) footage and likely has NO on-screen game clock — do not invent one.
+
+Task: produce a chronological log of every OFFENSIVE possession by the scouted team ({scouted_team}) that is visible in THIS chunk. One entry per {scouted_team} offensive possession.
+
+For each possession capture:
+- video_elapsed: mm:ss from the START of THIS chunk's video, at the moment the possession begins.
+- personnel: the {scouted_team} jerseys on the floor that you can confidently identify (up to 5). If you can only ID some, list those and stop. NEVER invent a jersey to reach five.
+- action_type: closest match from [set_play, PnR, DHO, iso, transition, motion, five_out, box_set, horns, flex, press_break, other]. Use "other" + detail if none fits.
+- action_detail: short free-text description of what actually happened.
+- situation: one of [BLOB, SLOB, ATO, late_clock, end_of_period, press_break, none].
+- initiator: jersey of the {scouted_team} player who initiated, or "unknown".
+- screeners: jerseys who set screens this possession, or [].
+- outcome_code: one of ["2pt make","2pt miss","3pt make","3pt miss","FT (N-of-M)","TO (cause)","OREB -> <next outcome>"].
+- outcome_detail: free text (shooter, location, cause, etc.).
+- boundary: "complete", or "start_partial" if already in progress when the chunk opens, or "end_partial" if cut off when the chunk ends.
+- confidence: high/medium/low for your jersey + attribution certainty on this possession.
+- notes: anything else worth recording.
+
+DISCIPLINE — read twice. COMPLETENESS and HONESTY both apply at the same time; neither one overrides the other.
+
+COMPLETENESS — account for the whole chunk:
+- Log the scouted team's offensive action across the ENTIRE chunk, in order, from the first sequence to the last. Do NOT silently skip possessions.
+- Messy, fast, scrambled, broken, and no-shot sequences all count as observed offensive action and MUST appear in the log. A turnover, a blocked shot, a loose ball that goes out of bounds, and a dead-ball reset each count as a real sequence and get a row.
+- Exact possession boundaries are not critical. If a scrambled sequence is logged as one entry or split into two, either is acceptable, as long as the action is observed and recorded.
+- What matters is that NO real offensive sequence goes entirely unlogged — NOT that your possession count matches any specific number. Omitting a sequence that clearly occurred is an error, exactly as serious as inventing one.
+
+HONESTY — only what you can see:
+- Log ONLY what you can see. Do NOT synthesize. No tendencies, no counts, no player profiles, no pace assessment. Just the possessions, in order.
+- If you cannot cleanly determine the initiator, a jersey, the action, or the outcome for a sequence that clearly occurred, STILL log it as a row: write "unknown" in the fields you cannot read and set confidence=low. A logged possession with unknown fields is correct and desired.
+- Do NOT invent details to fill a row, and do NOT drop a possession just because you cannot read its details. A confident guess in a field is a failure; so is omitting a real possession.
+
+- Do not stitch across the chunk edge. Flag partials and move on.
+
+Return JSON ONLY — an array of possession objects in the shape above. No prose, no markdown fences.
+
+--- SEEDED {scouted_team} ROSTER (jersey -> name) ---
+{roster}
