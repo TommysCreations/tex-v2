@@ -1,5 +1,14 @@
 # TEX v2 — Launch Checklist v2 (May 19 → June 7, 2026)
 
+> **RECONCILED 2026-06-01** (status review) — actual repo + Neon dev state:
+> - **Grading UI build COMPLETE** — all 9 items merged to `main` (#37/#38/#39/#40/#43/#44/#45/#46/#47).
+> - **All 5 golden films processed at `v1.0|v1.6`** synthesis in `film_analysis_cache`.
+> - **All 5 golden films have COMPLETE reports** (one per team) generated May 26–27, pv=v1.0, all 6 sections healthy. `generate_report` smoke (Phase 3.17) effectively done — not previously recorded.
+> - **Pipeline reliability fixed:** FFmpeg compress timeout (#48), process_film 4hr limits (#49), state-machine stuck-processing fix (`4b8075d`, branch `fix/state-machine-stuck-processing`, UNPUSHED).
+> - **Calibration NOT started:** 0 of 5 golden reports graded. `corrections` table holds 34 rows but ALL are the May 21 UI smoke test against stale report `970e57dd` — not real golden grades. `EVAL_SCORES.md` has 1 synthetic 3-claim row. The grading UI has never been pointed at the 5 real reports.
+> - **June 8 read: BEHIND / at risk.** Quality floors unmeasured; Stripe/policies/onboarding untouched. Critical path = grade 5 films → quantify floors → correction cycles.
+> - **Still open / added below:** PDF sniff-test, push+merge state-machine branch, May-25 data-integrity debt (uri_expiry drops failed chunks; Rebels dup film `1783a716`; chunk_index=2 failure pattern).
+
 **Updated 2026-05-19** — Grading UI scope revised after audit 
 (GRADING_UI_AUDIT.md showed 38% coverage, not 60%; build now sized 
 for 27-38 hours / ~4 focused days).
@@ -63,16 +72,16 @@ onboarded at $49.99/report (first report free).
 - [ ] Commit + PR
 
 ### Thursday May 21 (full day, ~11-14 hrs) — Build the grading experience
-- [ ] **R7:** Side-by-side layout at `/admin/grade/[report_id]` — two-pane, markdown-rendered (4-6h)
+- [x] **R7:** Side-by-side layout at `/admin/grade/[report_id]` — two-pane, markdown-rendered (4-6h) — **PR #40 merged (May 20)**
 - [x] **R9:** Sentence-split claim walker with [Captured][Missed][Hallucinated] buttons + keyboard shortcuts (4h) — **PR #43 merged**
 - [x] **R3+R10:** Per-claim save wiring — extend POST `/admin/corrections` for `claim_status`, auto-populate context (3-4h) — **PR #44 merged**
-- [ ] **R9 visual-state polish:** highlight previously-selected classification on back-navigation (neutral base / saturated active per tone) — follow-up PR on `feature/grading-ui`, awaiting Tommy smoke test
+- [x] **R9 visual-state polish:** highlight previously-selected classification on back-navigation (neutral base / saturated active per tone) — **PR #45 merged (May 21)**
 - [ ] Commit + PR
 
 ### Friday May 22 (evening, ~4-5 hrs) — Outputs
 - [x] **R11:** EVAL_SCORES.md auto-writer (markdown + JSONL sidecar) (2-3h) — **PR #46 merged**
-- [x] **R12:** Disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json` (2h) — **PR open on `feature/grading-ui`, awaiting Tommy smoke test. With R12 merged, the grading UI build is COMPLETE.**
-- [ ] Trigger pipeline re-runs on remaining 4 golden films at v1.6 (Fri night so Sat is clean)
+- [x] **R12:** Disk snapshot of graded report to `eval_snapshots/{film_id}_{prompt_version}_{ts}.json` (2h) — **PR #47 merged. Grading UI build COMPLETE (all 9 items).**
+- [x] Trigger pipeline re-runs on remaining 4 golden films at v1.6 — **DONE: all 5 golden films at `v1.0|v1.6` in `film_analysis_cache` (synth 18K–31K chars), processed May 25–26**
 - [ ] Commit + PR
 
 ### Saturday May 23 (full day) — Integration + first grade
@@ -98,8 +107,8 @@ onboarded at $49.99/report (first report free).
 - [ ] If time: second correction cycle
 
 ### End of Week 1 — Checkpoint
-- [ ] Grading UI built (all 9 items)
-- [ ] 5 films graded at v1.6 baseline
+- [x] Grading UI built (all 9 items) — **complete, merged to main**
+- [ ] 5 films graded at v1.6 baseline — **NOT DONE (0/5). Reports exist & are complete; grading not started. CRITICAL PATH.**
 - [ ] Quality floor gaps quantified in EVAL_SCORES.md
 - [ ] 1-2 correction cycles complete
 - [ ] EVAL_SCORES.md shows trajectory
@@ -245,9 +254,35 @@ onboarded at $49.99/report (first report free).
 
 ---
 
+## ➕ ADDED 2026-06-01 (reconciliation — items missing from original plan)
+
+### Shipped but untracked
+- [x] **generate_report on all 5 golden films** — one complete report per team (BBE, Rebels, Spire, Montverde, La Lumiere), pv=v1.0, all 6 sections, May 26–27. Phase 3.17 generate_report milestone.
+- [x] **FFmpeg compress timeout fix + admin film-retry endpoint** (#48, D-027/028)
+- [x] **process_film Celery limits raised to ~4hr** (#49, D-029)
+- [x] **State-machine stuck-`processing` fix + auto-recovery** (`4b8075d`)
+
+### Open / launch-relevant
+- [ ] **Push + merge `fix/state-machine-stuck-processing`** (commit `4b8075d` unpushed)
+- [ ] **PDF sniff-test** — reports are `complete` in DB; confirm WeasyPrint PDF assembles & looks right (EVALS "PDF export" eval not closed)
+- [ ] **Grade the 5 May-26 reports** (NOT old smoke report `970e57dd`) — these are the real golden reports
+- [ ] **Verify ≤15-min upload→PDF floor** — AT RISK: recent large films hit 117-min compress timeouts (budget raised to 4hr, well over the 15-min product floor)
+
+### Data-integrity debt (logged May 25, defer unless it bites)
+- [ ] `uri_expiry.get_valid_chunk_uris` silently drops `failed` chunks — could corrupt a report on next chunk failure
+- [ ] Florida Rebels duplicate film row `1783a716` (status=processed, 0/4 chunks extracted) — clean up; report uses dup `9922d24f`
+- [ ] chunk_index=2 upload/extraction failure pattern across 3 of 5 films — root cause unknown
+- [ ] `films.error_message` not cleared on error→processed recovery (cosmetic)
+
 ## 📝 NOTES
 
 ```
+[2026-06-01] Status review: grading UI build done; all 5 golden reports
+generated; calibration NOT started (0/5 graded — corrections table holds
+only the May 21 UI smoke test on stale report 970e57dd). Behind for June 8
+on quality (unmeasured) + commercial (Stripe/policies/onboarding untouched).
+Next action: grade Film 01 (BBE, report 6e365b56) end-to-end.
+
 [2026-05-19] Audit complete: GRADING_UI_AUDIT.md shows 38% coverage 
 of TRAINING.md §4.5. 9 build items identified, estimated 27-38 hours. 
 Build sized to Wed-Thu-Fri evening-Sat. Decisions locked: Option 1, 

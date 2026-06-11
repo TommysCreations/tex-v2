@@ -16,7 +16,7 @@ services:
 
   worker:
     build: ./backend
-    command: celery -A tasks.celery_app worker -Q film_processing,report_generation,section_generation,notifications --concurrency=2 --loglevel=info
+    command: celery -A tasks.celery_app worker -Q film_processing,report_generation,section_generation,notifications --concurrency=1 --loglevel=info
     env_file: ./backend/.env
     volumes: ["./backend:/app"]
     depends_on: [redis]
