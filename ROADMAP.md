@@ -20,6 +20,42 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 **Session note (2026-05-13):** `film_analysis_cache.prompt_version` is now computed in code from prompt file headers (`services/prompt_versions.py`: `offensive_sets` + `chunk_extraction` + `chunk_synthesis`). Chunk prompts 0A/0B bumped to **v1.2**. Tommy bumps only the `VERSION:` lines in `.txt` files — no separate constant in `film_processing.py`.
 **Session note (2026-05-13, preprocess prompts):** `chunk_extraction.txt` / `chunk_synthesis.txt` iterated to **v1.5** — per-chunk **`REACTIVE-VS-ZONE`** tag when offense is an answer to opponent zone (e.g. 1-2-2 / guards-up / middle drives); synthesis must not fold those into base Horns/1-4/motion totals without a base-vs-reactive split; **DEFENSE: BALL SCREEN COVERAGE** evidence line requires explicit thin-sample language when implied opponent PnR defensive possessions total fewer than four. Expect `film_analysis_cache.prompt_version` **`v1.0|v1.5`** after re-run (section prompts unchanged).
 
+---
+### 2026-05-25 — State machine fix + Gemini key migration + golden film recovery
+
+**Outcome:** All 5 golden films are now `status='processed'` in Neon dev. Ready for report generation + grading.
+
+**Code changes (branch `fix/state-machine-stuck-processing`, commit `4b8075d`, not yet pushed):**
+- backend/tasks/film_processing.py:297 — added `chunks_uploaded` to idempotency guard skip set
+- backend/tasks/celery_app.py:70-94 — `recover_stuck_jobs` now atomically resets stuck `processing` films >2h old back to `uploaded` before re-enqueueing (B1 fix)
+- SCHEMA.md:172 + :193 — added `chunks_uploaded` to valid status list and progression docs
+- docker-compose.yml — Celery worker concurrency 2→1 (laptop OOM workaround)
+
+**Infra changes (not in any commit):**
+- Switched GEMINI_API_KEY from tex-dev project to TEX Production project (different GCP account, Postpay Tier 1, $100 threshold). Old tex-dev key is depleted.
+- Freed 81 GB disk space (was at 162 MB free); see DECISIONS.md if logging there.
+
+**Manual SQL recoveries performed on Neon dev:**
+- Reset all 5 films from stuck `processing` back to `uploaded` at session start
+- Reset 3 chunks (Montverde/La Lumiere/Spire chunk_index=2) by clearing gemini_file_uri + extraction_output, setting gemini_file_state='uploading' + extraction_status='pending'
+- Reset La Lumiere + Spire films from `error` back to `processing` to allow synthesis after chunk recovery
+
+**Still open:**
+- Push `fix/state-machine-stuck-processing` branch + open PR + merge
+- Task 4.12 eval pass still pending (unblocked — reports can be generated)
+- Chunk_index=2 failure pattern across 3 of 5 films — needs investigation
+- Downstream bug in services/uri_expiry.py:33 + :70 — `get_valid_chunk_uris` silently drops `failed` chunks; would corrupt reports on next chunk failure
+- films.error_message not cleared on error→processed transition (Montverde row has stale text)
+
+*Known issues / tech debt logged this session (defer to post-launch unless they bite again):*
+- **Chunk_index=2 failure pattern** — 3 of 5 golden films (Montverde, La Lumiere, Spire) failed Gemini upload/extraction specifically on the middle chunk (`chunk_index=2`). Root cause unknown — content property of the middle segment, a `split_film` encoding artifact, or coincidence. Investigate before relying on the pipeline for non-golden films.
+- **`uri_expiry.get_valid_chunk_uris` silently drops failed chunks** (`backend/services/uri_expiry.py:33` + `:70`) — both queries filter `gemini_file_state = 'active'`, so a `failed` chunk is invisible to report-time re-upload/fetch. A report generated while any chunk is `failed` is built from an incomplete chunk set with no error surfaced. Would corrupt reports on the next chunk failure.
+- **`films.error_message` persists across error→processed recovery** — recovering a film from `error` to `processed` does not clear the stale `error_message` (Montverde row still carries old failure text). Cosmetic but misleading in the admin UI / debugging.
+- **Florida Rebels duplicate film row `1783a716-0ab5-458c-bfad-37bb7f034bc5`** — `films.status='processed'` but all 4 chunks stuck at `extraction_status='pending'` (0/4 complete, though Gemini files are `active`). Real data inconsistency from the manual recovery session (film status flipped without the chunk rows catching up). A clean duplicate of the same physical file exists at `9922d24f-dca5-4f29-ae20-f6b7b12cc7ad` (same `file_hash`, 4/4 complete) — that's the row used for report generation. The `1783a716` row was left untouched per Tommy; needs cleanup (soft-delete or re-extract) later. Same team_id `b6710f8b-4b1a-4272-96f2-d5892ab3418e`.
+- **Adobe Creative Cloud not fully uninstalled** — Cleaner Tool not yet run; leftover from the 81 GB disk-space recovery. Re-run the Adobe Creative Cloud Cleaner Tool to finish removal.
+
+---
+
 **Session log (2026-05-23, later) — Celery process_film time limits raised to 4 hours:**
 
 Yesterday's #48 raised the *inner* FFmpeg subprocess timeout from 3600s to 7000s. Today's run on a different batch of films exposed the next layer: two films (Brad Beal Elite + Florida Rebels) failed with `SoftTimeLimitExceeded` at exactly 117 min while FFmpeg was still re-encoding. The *outer* Celery wrapper around `process_film` was still on D-026's 7000s soft / 7200s hard budget, which was sized to cover compression alone — it left no room for the rest of the pipeline (R2 download + FFprobe validate + split + chunk upload to Gemini File API + DB writes).
@@ -1384,6 +1420,8 @@ Task                                    Status          Notes
 4.11 Frontend — pattern analyzer UI     ✓ Done          /admin/patterns — error rate tables by category + section. /admin/users — user list + credit grant.
 4.12 Phase 4 eval pass                  Not started     Correction saved, pattern table accurate. Needs test data.
 ```
+
+> **4.12 status note (2026-05-25):** All 5 golden films are now `processed` and ready for report generation as of the 2026-05-25 session. Eval pass remains open — blocked only on report generation + grading (no longer on film preprocessing). See the 2026-05-25 session log above.
 
 ---
 
