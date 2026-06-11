@@ -166,7 +166,7 @@ off the screen, pulled up for a jumper in the paint over Brewster's #4. It went 
 
 | # | Clock | Personnel on floor (5 jerseys) | Action | Initiator | Screener(s) | Outcome | Notes |
 |---|---|---|---|---|---|---|---|
-| 1 | Q1 8:00 | #3 #42 #2 #1 #11 | 4 out 1 in | #2 | #1 | 2pt dunk make | #2 refuses screen and drives to basket forcing help and then giving #42 a alley oop lob for dunk 
+| 1 | Q1 8:00 | #3 #42 #2 #1 #11 | 4 out 1 in | #3 | #1 | 2pt dunk make | #3 refuses screen and drives to basket forcing help and then giving #42 a alley oop lob for dunk 
 | 2 | Q1 7:16 | #3 #42 #2 #1 #11 | motion | #1 | #42, #3 | 2pt jumper make | #3 brings up ball #42 screens down on left side then pops and gets ball. #3 then screens for #1 at right eblow who curls off it and gets a pass from #42. #1 gets ball and hits a shot 
 | 3 | Q1 6:35 | same | 4 out 1 in | #11 | none | turnover | Montverde was pressured hard. #11 got ball in wing drove and drew a defense and dumped it to #42 in post. Brewster defender stole ball
 | 4 | Q1 6:08 | same | Left Side PnR, Right Side DHO | #11 | #42 | 3pt make | #2 got ball left wing and #42 set a ghost screen. #2 swung ball to left side where a DHO action happened. #11 drove right baseline and kicked it back to #2 top of key for open 3pt make

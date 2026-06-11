@@ -1,0 +1,1 @@
+{"timestamp": "2026-05-21T19:47:37Z", "film_id": "1c1408a1-7e35-42b6-a83f-8d8277717346", "report_id": "970e57dd-256c-464a-9d25-78f29dd01135", "prompt_version": "v1.0", "total_claims": 3, "captured": 1, "missed": 1, "hallucinated": 1, "captured_pct": 33.3, "missed_pct": 33.3, "hallucinated_pct": 33.3, "notes": ""}

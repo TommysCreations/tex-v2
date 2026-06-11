@@ -738,6 +738,34 @@ for the suppression in this file as a D-NNN entry.
 
 ---
 
+## D-030 — Stage A possession log: standalone perception layer, graded against film_watch_notes.md
+
+**Date:** 2026-06-11
+**Status:** Adopted
+
+**Decision:** The Stage A "possession log" is a **standalone second video consumer** — a perception layer that charts every offensive possession (clock, action, initiator, screeners, outcome, narrative) from the chunk videos, fully decoupled from the report pipeline. Its accuracy is graded **possession-by-possession against the human-charted possession table in `golden_set/*/film_watch_notes.md`** — not against `ground_truth.md` and not against report claims.
+
+The decoupling constraints are hard requirements (they apply to the future defensive layer too):
+- No edits to `extract_chunk` / Prompt 0A.
+- No read or write of `extraction_output`, the 0B synthesis input, `film_analysis_cache`, or `report_sections`.
+- Never touches `films.status`; never gates `run_chunk_synthesis` or `generate_report`.
+- Manual-trigger only (CLI script), no Celery task, no film-id advisory lock.
+- Reads chunk videos read-only; when Gemini URIs are dead, re-uploads the durable R2 copy to a **pass-owned ephemeral Gemini file** that is deleted after the run and never written back to `film_chunks`.
+- Output is append-only rows in its own table (`possession_logs`, migration 019), keyed by a fresh `run_id` per run so runs never overwrite each other.
+
+Built across PR #57 (standalone pass), PR #58 (prompt parameterization: `{scouted_team}`/`{opponent}`/`{roster}`), and PR #61 (completeness mandate, prompt v1.2). Diagnostic variants (e.g., `scripts/run_possession_log_window.py`, the short-window test) reuse the real pass's building blocks — same prompt file, model, parser, and insert path — and differ only in the video handed to Gemini.
+
+**Rationale:** Report-level grading conflates two failure classes: *perception* errors (the model misread what happened on the floor) and *synthesis* errors (the model saw it right but summarized it wrong). Stage 1 of the Commercial Readiness Ladder requires knowing which one is failing. A standalone possession log isolates perception: every row it emits is directly comparable to a row a human charted while watching the same film. `film_watch_notes.md` is the right grading target because it is possession-granular with the same fields the model outputs (clock, action, initiator, screener, outcome) — `ground_truth.md` is narrative/section-level and cannot score per-possession attribution. The hard decoupling exists so prompt iteration on the perception layer can move fast (re-run any film, any number of times) without ever invalidating the report cache, racing the report chord, or corrupting a coach-facing pipeline.
+
+**Alternatives considered:**
+- Grade against `ground_truth.md`: rejected — narrative-level, no per-possession rows, can't measure outcome accuracy or attribution (initiator/screener) at the granularity the gate requires.
+- Fold possession extraction into `extract_chunk` (Prompt 0A): rejected — entangles an experimental layer with the production report pipeline and its cache versioning (`film_analysis_cache.prompt_version`); every possession-log prompt bump would force a full preprocess re-run.
+- Auto-trigger from `process_film`: deferred — manual-only until the Stage A quality gate passes. Productionizing (trigger, video-cleanup race with `_cleanup_chunks`) is tracked in issue #54.
+
+**Reversal condition:** Stage A passes its quality gate (~90%+ outcome accuracy with near-zero hallucinated mechanisms, confirmed on at least two films). At that point the layer gets promoted into the production pipeline and the integration decisions (trigger point, cleanup ordering, cache interaction) are made in a new DECISIONS.md entry — the manual-only and append-only constraints are then up for renegotiation; the "never gate the report pipeline" constraint is not.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -756,5 +784,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: May 23, 2026 — D-029 added (process_film Celery limits raised 7000/7200s → 14000/14400s after empirical 117-min fail point on real films).*
-*29 decisions logged. All decisions current as of this date.*
+*Last updated: June 11, 2026 — D-030 added (Stage A possession log: standalone perception layer, graded against film_watch_notes.md).*
+*30 decisions logged. All decisions current as of this date.*
