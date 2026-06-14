@@ -52,9 +52,9 @@ def compress_film(input_path: str, output_path: str) -> None:
 
 
 def split_film(input_path: str, output_pattern: str) -> list[str]:
-    """Split a film into 20-25 minute segments.
+    """Split a film into 5-minute segments.
 
-    segment_time=1500 (25 minutes). Copy codec (no re-encoding). Reset timestamps.
+    segment_time=300 (5 minutes). Copy codec (no re-encoding). Reset timestamps.
     Output pattern must contain %03d, e.g. /tmp/{film_id}_chunk_%03d.mp4
 
     Returns sorted list of output chunk file paths.
@@ -72,7 +72,7 @@ def split_film(input_path: str, output_pattern: str) -> list[str]:
                 "-map",
                 "0",
                 "-segment_time",
-                "1500",
+                "300",
                 "-f",
                 "segment",
                 "-reset_timestamps",
