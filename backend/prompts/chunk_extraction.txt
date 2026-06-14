@@ -1,5 +1,6 @@
-VERSION: v1.6
+VERSION: v1.7
 CHANGELOG:
+  v1.7 — Anti-default-to-man rule + 1-2-2/2-3/3-2 zone-identification tells added to the DEFENSIVE SCHEME "BASE DEFENSE" line (these tells previously existed only on the offense/opponent-zone side); standalone DHO action bullet in half-court labeling. Film 04 calibration miss (full game logged ~100% man while a zone was clearly played). Existing Horns / 5-out / anti-bucketing offense rules unchanged.
   v1.6 — Canonical geometry for 5-out vs 1-4 flat/high PnR; forbid burying high PnR in generic 5-out; transition vs fast bring-up tempo block; two-layer defended PnR (big + ball defender); score sources + no bogus final; opponent standout trigger; OOB formation sweep; mandatory segment N for defended PnRs.
   v1.5 — Reactive-vs-zone tag on offense (splits zone answers from base half-court sets in synthesis); chunk cue for 2-2-1 / guards-up vs zone shell.
   v1.4 — Roster spelling enforced character-for-character; Horns vs 5-out disambiguation; zone shell cues; opponent never gets invented names; transition count definition tightened; sub reporting tied to roster.
@@ -46,6 +47,7 @@ HALF-COURT OFFENSIVE LABELING (scouted team on offense):
   Use standard coaching vocabulary. When you can see a named structure, use a **specific** label — do **not** default everything to generic "5-out motion" or "spread PnR" if a tighter name fits.
   Prefer separate ACTION lines when these are visibly distinct in this segment:
     • Horns / Horns DHO (two elbow anchors — see above)
+    • DHO (standalone dribble handoff): a guard-to-big or big-to-guard handoff at the elbow or wing that is NOT part of a Horns set. Tag the handoff explicitly as DHO; do not fold it into "5-out" or generic "motion."
     • **1-4 flat / high pick-and-roll** or **high ball-screen series** (canonical geometry above)
     • 4-out 1-in, motion, pass-and-cut continuity, or canonical **5-out** spacing (only **5-out** when all five match the canonical definition above)
     • Transition / early offense (own basket break — see counting rules below)
@@ -95,7 +97,12 @@ Single-occurrence actions: list at the end under "SINGLE-OCCURRENCE ACTIONS" wit
   Segment pace feel: [slow / moderate / fast]
 
 --- DEFENSIVE SCHEME (Team being scouted, on defense) ---
-  BASE DEFENSE: [man-to-man / zone type / press — be specific]
+  BASE DEFENSE: man-to-man / zone (specify type) / press — be specific. Check for zone on EVERY defensive possession; do not default to man. Failure mode observed: logging a full game as ~100% man, missing a zone that was clearly played.
+  ZONE ALIGNMENT TELLS — read the floor shape, not the matchups:
+    • 1-2-2 ZONE (half court): one defender at the top, two behind on the wings, two on the blocks. Defenders hold areas and pass off cutters rather than following one man.
+    • 2-3 ZONE: two up top, three across the baseline.
+    • 3-2 ZONE: three across the free-throw-line-extended, two on the blocks.
+    Distinguish a 1-2-2 ZONE (half court, areas held) from a 1-2-2 PRESS (same shape spread to three-quarter / full court). Tag which one. If defenders guard floor areas and switch off cutters, it is zone — log the type, do not call it man.
   SCHEME CHANGES: [did they change defenses during this segment? when? what triggered it?]
   **Defended opponent ball screens (scouted team on D) — quantify first:**
     **Opponent ball-screen possessions evaluable this segment:** N = [integer; 0 if none / none on film]
