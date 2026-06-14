@@ -78,9 +78,7 @@ CANONICAL_SECTION_ORDER = [
 # dev stack ./golden_set is mounted read-only at /golden_set. Production
 # (Cloud Run) will need a different strategy — bake into image or pull from
 # R2 — per GRADING_UI_AUDIT.md ("productionize later if needed").
-GOLDEN_SET_ROOT = Path(
-    os.environ.get("GOLDEN_SET_ROOT", "/golden_set")
-).resolve()
+GOLDEN_SET_ROOT = Path(os.environ.get("GOLDEN_SET_ROOT", "/golden_set")).resolve()
 # Slug accepted from URL path. Restricted to characters that can appear in a
 # directory name we control. Anything outside this set is rejected with 400
 # before any filesystem access.
@@ -162,10 +160,7 @@ async def get_ground_truth(
     candidate = (GOLDEN_SET_ROOT / film_slug).resolve()
     # Defense in depth: even with the regex, confirm the resolved path is
     # still inside GOLDEN_SET_ROOT before any read.
-    if (
-        candidate != GOLDEN_SET_ROOT
-        and GOLDEN_SET_ROOT not in candidate.parents
-    ):
+    if candidate != GOLDEN_SET_ROOT and GOLDEN_SET_ROOT not in candidate.parents:
         raise HTTPException(status_code=400, detail="Invalid film_slug")
 
     if not candidate.is_dir():
@@ -240,9 +235,7 @@ async def get_admin_report_detail(
         report_prompt_version=report_row[5],
         created_at=report_row[6],
         completed_at=report_row[7],
-        films=[
-            AdminReportFilm(film_id=str(r[0]), file_name=r[1]) for r in film_rows
-        ],
+        films=[AdminReportFilm(film_id=str(r[0]), file_name=r[1]) for r in film_rows],
         sections=[
             AdminReportSection(
                 section_type=r[0],
@@ -284,8 +277,7 @@ async def retry_film_admin(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT status, r2_key FROM films "
-                "WHERE id = %s AND deleted_at IS NULL",
+                "SELECT status, r2_key FROM films WHERE id = %s AND deleted_at IS NULL",
                 (film_id,),
             )
             row = cur.fetchone()
@@ -673,8 +665,7 @@ async def complete_grading_session(
             # verdict from this session. Same connection, run alongside the
             # rollup queries so we don't reopen later.
             cur.execute(
-                "SELECT section_type, content "
-                "FROM report_sections WHERE report_id = %s",
+                "SELECT section_type, content FROM report_sections WHERE report_id = %s",
                 (body.report_id,),
             )
             section_rows = cur.fetchall()
@@ -780,9 +771,7 @@ async def complete_grading_session(
     if body.film_slug and GOLDEN_SLUG_PATTERN.match(body.film_slug):
         ground_truth_ref = f"golden_set/{body.film_slug}/ground_truth.md"
 
-    report_content = {
-        section_type: content for section_type, content in section_rows
-    }
+    report_content = {section_type: content for section_type, content in section_rows}
     classifications = [
         {
             "section_type": r[0],
@@ -800,8 +789,9 @@ async def complete_grading_session(
         "film_id": film_id,
         "prompt_version": body.prompt_version,
         "graded_at": iso_timestamp,
-        "session_started_at": body.session_started_at.astimezone(UTC)
-        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "session_started_at": body.session_started_at.astimezone(UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
         "notes": notes,
         "rollup": {
             "total_claims": total,
