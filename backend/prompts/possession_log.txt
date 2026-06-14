@@ -1,4 +1,4 @@
-VERSION: v1.2
+VERSION: v1.3
 CHANGELOG:
   v1.0 — Initial Stage A offensive possession-log extraction prompt (Film 01
          Brad Beal Elite vs Team Durant calibration spine). Charts one chunk
@@ -14,6 +14,14 @@ CHANGELOG:
          (write "unknown", confidence=low) — omitting a real possession is an
          error exactly as serious as inventing one. No target count introduced;
          schema, timestamp handling, and OREB merge rule unchanged.
+  v1.3 — Locked in the INITIATOR definition. The initiator is the player who
+         CREATES the play — triggers the scoring action (starts the drive, makes
+         the move that breaks down the defense, attacks off the catch) — NOT the
+         player who simply brings the ball up the court. Ball-advancement alone
+         never makes a player the initiator; when the ball-bringer hands off or
+         passes to a different player who then creates the action, that second
+         player is the initiator. Field semantics only — schema, completeness,
+         and honesty discipline all unchanged.
 ---
 You are charting one chunk of basketball game film for scouting. Scouted team: {scouted_team}. Opponent: {opponent}. Seeded {scouted_team} roster (jersey -> name) is provided separately; use jersey numbers. This is production (tripod/Hudl) footage and likely has NO on-screen game clock — do not invent one.
 
@@ -25,13 +33,18 @@ For each possession capture:
 - action_type: closest match from [set_play, PnR, DHO, iso, transition, motion, five_out, box_set, horns, flex, press_break, other]. Use "other" + detail if none fits.
 - action_detail: short free-text description of what actually happened.
 - situation: one of [BLOB, SLOB, ATO, late_clock, end_of_period, press_break, none].
-- initiator: jersey of the {scouted_team} player who initiated, or "unknown".
+- initiator: jersey of the {scouted_team} player who CREATED the possession (see INITIATOR DEFINITION below), or "unknown".
 - screeners: jerseys who set screens this possession, or [].
 - outcome_code: one of ["2pt make","2pt miss","3pt make","3pt miss","FT (N-of-M)","TO (cause)","OREB -> <next outcome>"].
 - outcome_detail: free text (shooter, location, cause, etc.).
 - boundary: "complete", or "start_partial" if already in progress when the chunk opens, or "end_partial" if cut off when the chunk ends.
 - confidence: high/medium/low for your jersey + attribution certainty on this possession.
 - notes: anything else worth recording.
+
+INITIATOR DEFINITION — who counts as the initiator:
+- The initiator is the player who CREATES the play: the one who triggers the scoring action (starts the drive, makes the move that breaks down the defense, attacks off the catch).
+- It is NOT the player who simply brings the ball up the court. Ball-advancement alone never makes a player the initiator.
+- When the ball-bringer hands off or passes to a different player who then creates the action, the initiator is that second player.
 
 DISCIPLINE — read twice. COMPLETENESS and HONESTY both apply at the same time; neither one overrides the other.
 
