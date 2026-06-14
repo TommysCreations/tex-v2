@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -699,7 +699,7 @@ async def complete_grading_session(
     missed_pct = _pct(counts["missed"], total)
     hallucinated_pct = _pct(counts["hallucinated"], total)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     iso_timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     iso_date = now.strftime("%Y-%m-%d")
     notes = body.notes or ""
@@ -763,7 +763,7 @@ async def complete_grading_session(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to write EVAL_SCORES at {EVAL_SCORES_ROOT}: {e}",
-        )
+        ) from e
 
     # R12: flight-recorder snapshot. Runs after the EVAL_SCORES writes so a
     # snapshot failure can't block the ledger row (the rollup is the
@@ -800,7 +800,7 @@ async def complete_grading_session(
         "film_id": film_id,
         "prompt_version": body.prompt_version,
         "graded_at": iso_timestamp,
-        "session_started_at": body.session_started_at.astimezone(timezone.utc)
+        "session_started_at": body.session_started_at.astimezone(UTC)
         .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "notes": notes,
         "rollup": {
